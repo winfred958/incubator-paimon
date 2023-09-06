@@ -19,10 +19,13 @@
 package org.apache.paimon.catalog;
 
 import org.apache.paimon.annotation.Public;
+import org.apache.paimon.metastore.MetastoreClient;
 import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.table.Table;
 
+import java.io.Serializable;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -39,12 +42,18 @@ public interface Catalog extends AutoCloseable {
     String DEFAULT_DATABASE = "default";
 
     String SYSTEM_TABLE_SPLITTER = "$";
+    String SYSTEM_DATABASE_NAME = "sys";
 
     /**
      * Get lock factory from catalog. Lock is used to support multiple concurrent writes on the
      * object store.
      */
     Optional<CatalogLock.Factory> lockFactory();
+
+    /** Get metastore client factory for the table specified by {@code identifier}. */
+    default Optional<MetastoreClient.Factory> metastoreClientFactory(Identifier identifier) {
+        return Optional.empty();
+    }
 
     /**
      * Get the names of all databases in this catalog.
@@ -180,7 +189,23 @@ public interface Catalog extends AutoCloseable {
      * @throws TableNotExistException if the table does not exist
      */
     void alterTable(Identifier identifier, List<SchemaChange> changes, boolean ignoreIfNotExists)
-            throws TableNotExistException;
+            throws TableNotExistException, ColumnAlreadyExistException, ColumnNotExistException;
+
+    /**
+     * Modify an existing table from a {@link SchemaChange}.
+     *
+     * <p>NOTE: System tables can not be altered.
+     *
+     * @param identifier path of the table to be modified
+     * @param change the schema change
+     * @param ignoreIfNotExists flag to specify behavior when the table does not exist: if set to
+     *     false, throw an exception, if set to true, do nothing.
+     * @throws TableNotExistException if the table does not exist
+     */
+    default void alterTable(Identifier identifier, SchemaChange change, boolean ignoreIfNotExists)
+            throws TableNotExistException, ColumnAlreadyExistException, ColumnNotExistException {
+        alterTable(identifier, Collections.singletonList(change), ignoreIfNotExists);
+    }
 
     /** Return a boolean that indicates whether this catalog is case-sensitive. */
     default boolean caseSensitive() {
@@ -247,6 +272,15 @@ public interface Catalog extends AutoCloseable {
         }
     }
 
+    /** Exception for trying to operate on a system database. */
+    class ProcessSystemDatabaseException extends IllegalArgumentException {
+        private static final String MSG = "Can't do operation on system database.";
+
+        public ProcessSystemDatabaseException() {
+            super(MSG);
+        }
+    }
+
     /** Exception for trying to create a table that already exists. */
     class TableAlreadyExistException extends Exception {
 
@@ -287,5 +321,65 @@ public interface Catalog extends AutoCloseable {
         public Identifier identifier() {
             return identifier;
         }
+    }
+
+    /** Exception for trying to alter a column that already exists. */
+    class ColumnAlreadyExistException extends Exception {
+
+        private static final String MSG = "Column %s already exists in the %s table.";
+
+        private final Identifier identifier;
+        private final String column;
+
+        public ColumnAlreadyExistException(Identifier identifier, String column) {
+            this(identifier, column, null);
+        }
+
+        public ColumnAlreadyExistException(Identifier identifier, String column, Throwable cause) {
+            super(String.format(MSG, column, identifier.getFullName()), cause);
+            this.identifier = identifier;
+            this.column = column;
+        }
+
+        public Identifier identifier() {
+            return identifier;
+        }
+
+        public String column() {
+            return column;
+        }
+    }
+
+    /** Exception for trying to operate on a column that doesn't exist. */
+    class ColumnNotExistException extends Exception {
+
+        private static final String MSG = "Column %s does not exist in the %s table.";
+
+        private final Identifier identifier;
+        private final String column;
+
+        public ColumnNotExistException(Identifier identifier, String column) {
+            this(identifier, column, null);
+        }
+
+        public ColumnNotExistException(Identifier identifier, String column, Throwable cause) {
+            super(String.format(MSG, column, identifier.getFullName()), cause);
+            this.identifier = identifier;
+            this.column = column;
+        }
+
+        public Identifier identifier() {
+            return identifier;
+        }
+
+        public String column() {
+            return column;
+        }
+    }
+
+    /** Loader of {@link Catalog}. */
+    @FunctionalInterface
+    interface Loader extends Serializable {
+        Catalog load();
     }
 }

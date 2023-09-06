@@ -19,7 +19,8 @@
 package org.apache.paimon.table.source.snapshot;
 
 import org.apache.paimon.CoreOptions;
-import org.apache.paimon.operation.ScanKind;
+import org.apache.paimon.Snapshot;
+import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.utils.SnapshotManager;
 
 import org.slf4j.Logger;
@@ -33,7 +34,7 @@ public class CompactedStartingScanner implements StartingScanner {
     private static final Logger LOG = LoggerFactory.getLogger(CompactedStartingScanner.class);
 
     @Override
-    public Result scan(SnapshotManager snapshotManager, SnapshotSplitReader snapshotSplitReader) {
+    public Result scan(SnapshotManager snapshotManager, SnapshotReader snapshotReader) {
         Long startingSnapshotId = pick(snapshotManager);
         if (startingSnapshotId == null) {
             startingSnapshotId = snapshotManager.latestSnapshotId();
@@ -47,16 +48,12 @@ public class CompactedStartingScanner implements StartingScanner {
             }
         }
 
-        return new ScannedResult(
-                startingSnapshotId,
-                snapshotSplitReader
-                        .withKind(ScanKind.ALL)
-                        .withSnapshot(startingSnapshotId)
-                        .splits());
+        return StartingScanner.fromPlan(
+                snapshotReader.withMode(ScanMode.ALL).withSnapshot(startingSnapshotId).read());
     }
 
     @Nullable
     protected Long pick(SnapshotManager snapshotManager) {
-        return snapshotManager.latestCompactedSnapshotId();
+        return snapshotManager.pickOrLatest(s -> s.commitKind() == Snapshot.CommitKind.COMPACT);
     }
 }

@@ -22,6 +22,7 @@ import org.apache.paimon.CoreOptions;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.io.DataFileMetaSerializer;
+import org.apache.paimon.options.Options;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.utils.Preconditions;
 
@@ -42,11 +43,10 @@ import static org.apache.paimon.utils.SerializationUtils.deserializeBinaryRow;
  * org.apache.paimon.flink.source.CompactorSourceBuilder}. The records will contain partition keys
  * in the first few columns, and bucket number in the last column.
  */
-public class StoreCompactOperator extends PrepareCommitOperator<RowData> {
+public class StoreCompactOperator extends PrepareCommitOperator<RowData, Committable> {
 
     private final FileStoreTable table;
     private final StoreSinkWrite.Provider storeSinkWriteProvider;
-    private final boolean isStreaming;
     private final String initialCommitUser;
 
     private transient StoreSinkWriteState state;
@@ -56,14 +56,13 @@ public class StoreCompactOperator extends PrepareCommitOperator<RowData> {
     public StoreCompactOperator(
             FileStoreTable table,
             StoreSinkWrite.Provider storeSinkWriteProvider,
-            boolean isStreaming,
             String initialCommitUser) {
+        super(Options.fromMap(table.options()));
         Preconditions.checkArgument(
                 !table.coreOptions().writeOnly(),
                 CoreOptions.WRITE_ONLY.key() + " should not be true for StoreCompactOperator.");
         this.table = table;
         this.storeSinkWriteProvider = storeSinkWriteProvider;
-        this.isStreaming = isStreaming;
         this.initialCommitUser = initialCommitUser;
     }
 
@@ -93,7 +92,8 @@ public class StoreCompactOperator extends PrepareCommitOperator<RowData> {
                         table,
                         commitUser,
                         state,
-                        getContainingTask().getEnvironment().getIOManager());
+                        getContainingTask().getEnvironment().getIOManager(),
+                        memoryPool);
     }
 
     @Override
@@ -112,7 +112,7 @@ public class StoreCompactOperator extends PrepareCommitOperator<RowData> {
         byte[] serializedFiles = record.getBinary(3);
         List<DataFileMeta> files = dataFileMetaSerializer.deserializeList(serializedFiles);
 
-        if (isStreaming) {
+        if (write.streamingMode()) {
             write.notifyNewFiles(snapshotId, partition, bucket, files);
             write.compact(partition, bucket, false);
         } else {
@@ -125,9 +125,9 @@ public class StoreCompactOperator extends PrepareCommitOperator<RowData> {
     }
 
     @Override
-    protected List<Committable> prepareCommit(boolean doCompaction, long checkpointId)
+    protected List<Committable> prepareCommit(boolean waitCompaction, long checkpointId)
             throws IOException {
-        return write.prepareCommit(doCompaction, checkpointId);
+        return write.prepareCommit(waitCompaction, checkpointId);
     }
 
     @Override

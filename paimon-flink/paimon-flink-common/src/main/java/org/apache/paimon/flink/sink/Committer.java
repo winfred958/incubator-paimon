@@ -19,10 +19,13 @@
 
 package org.apache.paimon.flink.sink;
 
-import org.apache.paimon.manifest.ManifestCommittable;
+import org.apache.flink.metrics.groups.OperatorIOMetricGroup;
 
 import java.io.IOException;
+import java.io.Serializable;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The {@code Committer} is responsible for creating and committing an aggregated committable, which
@@ -30,17 +33,27 @@ import java.util.List;
  *
  * <p>The {@code Committer} runs with parallelism equal to 1.
  */
-public interface Committer extends AutoCloseable {
-
-    /** Find out which global committables need to be retried when recovering from the failure. */
-    List<ManifestCommittable> filterRecoveredCommittables(
-            List<ManifestCommittable> globalCommittables) throws IOException;
+public interface Committer<CommitT, GlobalCommitT> extends AutoCloseable {
 
     /** Compute an aggregated committable from a list of committables. */
-    ManifestCommittable combine(long checkpointId, long watermark, List<Committable> committables)
+    GlobalCommitT combine(long checkpointId, long watermark, List<CommitT> committables)
             throws IOException;
 
-    /** Commits the given {@link ManifestCommittable}. */
-    void commit(List<ManifestCommittable> globalCommittables)
-            throws IOException, InterruptedException;
+    /** Commits the given {@link GlobalCommitT}. */
+    void commit(List<GlobalCommitT> globalCommittables) throws IOException, InterruptedException;
+
+    /**
+     * Filter out all {@link GlobalCommitT} which have committed, and commit the remaining {@link
+     * GlobalCommitT}.
+     */
+    int filterAndCommit(List<GlobalCommitT> globalCommittables) throws IOException;
+
+    Map<Long, List<CommitT>> groupByCheckpoint(Collection<CommitT> committables);
+
+    /** Factory to create {@link Committer}. */
+    interface Factory<CommitT, GlobalCommitT> extends Serializable {
+
+        Committer<CommitT, GlobalCommitT> create(
+                String commitUser, OperatorIOMetricGroup metricGroup);
+    }
 }

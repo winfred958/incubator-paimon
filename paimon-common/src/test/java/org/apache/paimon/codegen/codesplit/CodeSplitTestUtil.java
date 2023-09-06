@@ -23,19 +23,21 @@ import org.apache.paimon.utils.StringUtils;
 
 import org.codehaus.commons.compiler.CompileException;
 import org.codehaus.janino.SimpleCompiler;
-import org.junit.jupiter.api.Assertions;
 
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
 import static org.apache.paimon.utils.Preconditions.checkNotNull;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 /** Util class for code split tests. */
 public final class CodeSplitTestUtil {
@@ -107,7 +109,7 @@ public final class CodeSplitTestUtil {
             try {
                 CodeSplitTestUtil.tryCompile(CodeSplitTestUtil.class.getClassLoader(), code);
             } catch (CompileException e) {
-                Assertions.fail(
+                fail(
                         String.format(
                                 "Compilation for file [%s] failed with message: %s",
                                 classFile, e.getMessage()));
@@ -120,5 +122,21 @@ public final class CodeSplitTestUtil {
         SimpleCompiler compiler = new SimpleCompiler();
         compiler.setParentClassLoader(cl);
         compiler.cook(code);
+    }
+
+    public static String removeApacheHeader(String content) {
+        String[] lines = content.trim().split("\n");
+        List<String> removed = new ArrayList<>();
+        int i;
+        for (i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.startsWith("/*") && !line.startsWith(" *") && !"".equals(line)) {
+                break;
+            }
+        }
+        for (; i < lines.length; i++) {
+            removed.add(lines[i]);
+        }
+        return String.join("\n", removed);
     }
 }

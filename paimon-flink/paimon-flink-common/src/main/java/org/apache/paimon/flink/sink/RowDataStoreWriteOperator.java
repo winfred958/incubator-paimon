@@ -43,19 +43,14 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Objects;
 
 /** A {@link PrepareCommitOperator} to write {@link RowData}. Record schema is fixed. */
-public class RowDataStoreWriteOperator extends PrepareCommitOperator<RowData> {
+public class RowDataStoreWriteOperator extends TableWriteOperator<RowData> {
 
     private static final long serialVersionUID = 3L;
 
-    private final FileStoreTable table;
     @Nullable private final LogSinkFunction logSinkFunction;
-    private final StoreSinkWrite.Provider storeSinkWriteProvider;
-    private final String initialCommitUser;
-
-    private transient StoreSinkWriteState state;
-    private transient StoreSinkWrite write;
     private transient SimpleContext sinkContext;
     @Nullable private transient LogWriteCallback logCallback;
 
@@ -67,10 +62,8 @@ public class RowDataStoreWriteOperator extends PrepareCommitOperator<RowData> {
             @Nullable LogSinkFunction logSinkFunction,
             StoreSinkWrite.Provider storeSinkWriteProvider,
             String initialCommitUser) {
-        this.table = table;
+        super(table, storeSinkWriteProvider, initialCommitUser);
         this.logSinkFunction = logSinkFunction;
-        this.storeSinkWriteProvider = storeSinkWriteProvider;
-        this.initialCommitUser = initialCommitUser;
     }
 
     @Override
@@ -88,33 +81,14 @@ public class RowDataStoreWriteOperator extends PrepareCommitOperator<RowData> {
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
-        // Each job can only have one user name and this name must be consistent across restarts.
-        // We cannot use job id as commit user name here because user may change job id by creating
-        // a savepoint, stop the job and then resume from savepoint.
-        String commitUser =
-                StateUtils.getSingleValueFromState(
-                        context, "commit_user_state", String.class, initialCommitUser);
-
-        RowDataChannelComputer channelComputer =
-                new RowDataChannelComputer(table.schema(), logSinkFunction != null);
-        channelComputer.setup(getRuntimeContext().getNumberOfParallelSubtasks());
-        state =
-                new StoreSinkWriteState(
-                        context,
-                        (tableName, partition, bucket) ->
-                                channelComputer.channel(partition, bucket)
-                                        == getRuntimeContext().getIndexOfThisSubtask());
-
-        write =
-                storeSinkWriteProvider.provide(
-                        table,
-                        commitUser,
-                        state,
-                        getContainingTask().getEnvironment().getIOManager());
-
         if (logSinkFunction != null) {
             StreamingFunctionUtils.restoreFunctionState(context, logSinkFunction);
         }
+    }
+
+    @Override
+    protected boolean containLogSystem() {
+        return logSinkFunction != null;
     }
 
     @Override
@@ -162,9 +136,6 @@ public class RowDataStoreWriteOperator extends PrepareCommitOperator<RowData> {
     public void snapshotState(StateSnapshotContext context) throws Exception {
         super.snapshotState(context);
 
-        write.snapshotState();
-        state.snapshotState();
-
         if (logSinkFunction != null) {
             StreamingFunctionUtils.snapshotFunctionState(
                     context, getOperatorStateBackend(), logSinkFunction);
@@ -184,7 +155,6 @@ public class RowDataStoreWriteOperator extends PrepareCommitOperator<RowData> {
     public void close() throws Exception {
         super.close();
 
-        write.close();
         if (logSinkFunction != null) {
             FunctionUtils.closeFunction(logSinkFunction);
         }
@@ -209,13 +179,13 @@ public class RowDataStoreWriteOperator extends PrepareCommitOperator<RowData> {
     }
 
     @Override
-    protected List<Committable> prepareCommit(boolean doCompaction, long checkpointId)
+    protected List<Committable> prepareCommit(boolean waitCompaction, long checkpointId)
             throws IOException {
-        List<Committable> committables = write.prepareCommit(doCompaction, checkpointId);
+        List<Committable> committables = super.prepareCommit(waitCompaction, checkpointId);
 
         if (logCallback != null) {
             try {
-                logSinkFunction.flush();
+                Objects.requireNonNull(logSinkFunction).flush();
             } catch (Exception e) {
                 throw new IOException(e);
             }

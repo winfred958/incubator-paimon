@@ -24,30 +24,32 @@ import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.table.DataTable;
 import org.apache.paimon.table.Table;
 import org.apache.paimon.table.source.ReadBuilder;
-import org.apache.paimon.table.source.Split;
 
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.connector.source.Source;
 import org.apache.flink.table.connector.ChangelogMode;
-import org.apache.flink.table.connector.source.DynamicTableSource;
+import org.apache.flink.table.connector.source.LookupTableSource;
+import org.apache.flink.table.connector.source.ScanTableSource.ScanContext;
+import org.apache.flink.table.connector.source.ScanTableSource.ScanRuntimeProvider;
 import org.apache.flink.table.connector.source.SourceProvider;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.plan.stats.TableStats;
 
 import javax.annotation.Nullable;
-
-import java.util.List;
 
 /** A {@link FlinkTableSource} for system table. */
 public class SystemTableSource extends FlinkTableSource {
 
     private final boolean isStreamingMode;
     private final int splitBatchSize;
+    private final FlinkConnectorOptions.SplitAssignMode splitAssignMode;
 
     public SystemTableSource(Table table, boolean isStreamingMode) {
         super(table);
         this.isStreamingMode = isStreamingMode;
-        this.splitBatchSize =
-                Options.fromMap(table.options())
-                        .get(FlinkConnectorOptions.SCAN_SPLIT_ENUMERATOR_BATCH_SIZE);
+        Options options = Options.fromMap(table.options());
+        this.splitBatchSize = options.get(FlinkConnectorOptions.SCAN_SPLIT_ENUMERATOR_BATCH_SIZE);
+        this.splitAssignMode = options.get(FlinkConnectorOptions.SCAN_SPLIT_ENUMERATOR_ASSIGN_MODE);
     }
 
     public SystemTableSource(
@@ -56,10 +58,12 @@ public class SystemTableSource extends FlinkTableSource {
             @Nullable Predicate predicate,
             @Nullable int[][] projectFields,
             @Nullable Long limit,
-            int splitBatchSize) {
+            int splitBatchSize,
+            FlinkConnectorOptions.SplitAssignMode splitAssignMode) {
         super(table, predicate, projectFields, limit);
         this.isStreamingMode = isStreamingMode;
         this.splitBatchSize = splitBatchSize;
+        this.splitAssignMode = splitAssignMode;
     }
 
     @Override
@@ -76,20 +80,41 @@ public class SystemTableSource extends FlinkTableSource {
         if (isStreamingMode && table instanceof DataTable) {
             source = new ContinuousFileStoreSource(readBuilder, table.options(), limit);
         } else {
-            List<Split> splits = readBuilder.newScan().plan().splits();
-            source = new StaticFileStoreSource(readBuilder, limit, splitBatchSize, splits);
+            source = new StaticFileStoreSource(readBuilder, limit, splitBatchSize, splitAssignMode);
         }
         return SourceProvider.of(source);
     }
 
     @Override
-    public DynamicTableSource copy() {
+    public SystemTableSource copy() {
         return new SystemTableSource(
-                table, isStreamingMode, predicate, projectFields, limit, splitBatchSize);
+                table,
+                isStreamingMode,
+                predicate,
+                projectFields,
+                limit,
+                splitBatchSize,
+                splitAssignMode);
     }
 
     @Override
     public String asSummaryString() {
         return "Paimon-SystemTable-Source";
+    }
+
+    @Override
+    public void pushWatermark(WatermarkStrategy<RowData> watermarkStrategy) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public LookupTableSource.LookupRuntimeProvider getLookupRuntimeProvider(
+            LookupTableSource.LookupContext context) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public TableStats reportStatistics() {
+        throw new UnsupportedOperationException();
     }
 }

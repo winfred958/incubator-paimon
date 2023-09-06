@@ -29,6 +29,12 @@ public class CodeGenUtils {
 
     public static final Projection EMPTY_PROJECTION = input -> BinaryRow.EMPTY_ROW;
 
+    public static Projection newProjection(RowType inputType, List<String> fields) {
+        List<String> fieldNames = inputType.getFieldNames();
+        int[] mapping = fields.stream().mapToInt(fieldNames::indexOf).toArray();
+        return newProjection(inputType, mapping);
+    }
+
     public static Projection newProjection(RowType inputType, int[] mapping) {
         if (mapping.length == 0) {
             return EMPTY_PROJECTION;
@@ -49,6 +55,11 @@ public class CodeGenUtils {
     public static GeneratedClass<RecordComparator> generateRecordComparator(
             List<DataType> fieldTypes, String name) {
         return CodeGenLoader.getCodeGenerator().generateRecordComparator(fieldTypes, name);
+    }
+
+    public static GeneratedClass<RecordEqualiser> generateRecordEqualiser(
+            List<DataType> fieldTypes, String name) {
+        return CodeGenLoader.getCodeGenerator().generateRecordEqualiser(fieldTypes, name);
     }
 
     public static RecordComparator newRecordComparator(List<DataType> fieldTypes, String name) {

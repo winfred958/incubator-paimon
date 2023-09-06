@@ -18,12 +18,13 @@
 
 package org.apache.paimon.mergetree.compact;
 
-import org.apache.paimon.CoreOptions.SortEngine;
 import org.apache.paimon.KeyValue;
+import org.apache.paimon.codegen.RecordEqualiser;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.io.KeyValueFileReaderFactory;
 import org.apache.paimon.io.KeyValueFileWriterFactory;
+import org.apache.paimon.mergetree.MergeSorter;
 import org.apache.paimon.mergetree.SortedRun;
 import org.apache.paimon.utils.Preconditions;
 
@@ -42,15 +43,15 @@ public class FullChangelogMergeTreeCompactRewriter extends ChangelogMergeTreeRew
             KeyValueFileWriterFactory writerFactory,
             Comparator<InternalRow> keyComparator,
             MergeFunctionFactory<KeyValue> mfFactory,
-            SortEngine sortEngine,
-            Comparator<InternalRow> valueComparator,
+            MergeSorter mergeSorter,
+            RecordEqualiser valueComparator,
             boolean changelogRowDeduplicate) {
         super(
                 readerFactory,
                 writerFactory,
                 keyComparator,
                 mfFactory,
-                sortEngine,
+                mergeSorter,
                 valueComparator,
                 changelogRowDeduplicate);
         this.maxLevel = maxLevel;
@@ -76,7 +77,7 @@ public class FullChangelogMergeTreeCompactRewriter extends ChangelogMergeTreeRew
     @Override
     protected MergeFunctionWrapper<ChangelogResult> createMergeWrapper(int outputLevel) {
         return new FullChangelogMergeFunctionWrapper(
-                mfFactory.create(), maxLevel, valueComparator, changelogRowDeduplicate);
+                mfFactory.create(), maxLevel, valueEqualiser, changelogRowDeduplicate);
     }
 
     @Override

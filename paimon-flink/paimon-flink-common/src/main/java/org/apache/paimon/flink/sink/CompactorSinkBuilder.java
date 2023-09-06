@@ -18,14 +18,14 @@
 
 package org.apache.paimon.flink.sink;
 
-import org.apache.paimon.operation.Lock;
+import org.apache.paimon.table.BucketMode;
 import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSink;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.transformations.PartitionTransformation;
 import org.apache.flink.table.data.RowData;
+
+import static org.apache.paimon.flink.sink.FlinkStreamPartitioner.partition;
 
 /** Builder for {@link CompactorSink}. */
 public class CompactorSinkBuilder {
@@ -33,7 +33,6 @@ public class CompactorSinkBuilder {
     private final FileStoreTable table;
 
     private DataStream<RowData> input;
-    private Lock.Factory lockFactory = Lock.emptyFactory();
 
     public CompactorSinkBuilder(FileStoreTable table) {
         this.table = table;
@@ -44,19 +43,20 @@ public class CompactorSinkBuilder {
         return this;
     }
 
-    public CompactorSinkBuilder withLockFactory(Lock.Factory lockFactory) {
-        this.lockFactory = lockFactory;
-        return this;
+    public DataStreamSink<?> build() {
+        BucketMode bucketMode = table.bucketMode();
+        switch (bucketMode) {
+            case FIXED:
+            case DYNAMIC:
+                return buildForBucketAware();
+            case UNAWARE:
+            default:
+                throw new UnsupportedOperationException("Unsupported bucket mode: " + bucketMode);
+        }
     }
 
-    public DataStreamSink<?> build() {
-        BucketingStreamPartitioner<RowData> partitioner =
-                new BucketingStreamPartitioner<>(new BucketsRowChannelComputer());
-        PartitionTransformation<RowData> partitioned =
-                new PartitionTransformation<>(input.getTransformation(), partitioner);
-
-        StreamExecutionEnvironment env = input.getExecutionEnvironment();
-        CompactorSink sink = new CompactorSink(table, lockFactory);
-        return sink.sinkFrom(new DataStream<>(env, partitioned));
+    private DataStreamSink<?> buildForBucketAware() {
+        DataStream<RowData> partitioned = partition(input, new BucketsRowChannelComputer(), null);
+        return new CompactorSink(table).sinkFrom(partitioned);
     }
 }

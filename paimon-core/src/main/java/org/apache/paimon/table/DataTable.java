@@ -21,17 +21,20 @@ package org.apache.paimon.table;
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
-import org.apache.paimon.table.source.snapshot.SnapshotSplitReader;
+import org.apache.paimon.table.source.snapshot.SnapshotReader;
 import org.apache.paimon.utils.SnapshotManager;
+import org.apache.paimon.utils.TagManager;
 
 /** A {@link Table} for data. */
 public interface DataTable extends InnerTable {
 
-    SnapshotSplitReader newSnapshotSplitReader();
+    SnapshotReader newSnapshotReader();
 
     CoreOptions coreOptions();
 
     SnapshotManager snapshotManager();
+
+    TagManager tagManager();
 
     Path location();
 

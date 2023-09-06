@@ -27,7 +27,7 @@ import java.util.List;
 /** Helper class for the first planning of {@link TableScan}. */
 public interface StartingScanner {
 
-    Result scan(SnapshotManager snapshotManager, SnapshotSplitReader snapshotSplitReader);
+    Result scan(SnapshotManager snapshotManager, SnapshotReader snapshotReader);
 
     /** Scan result of {@link #scan}. */
     interface Result {}
@@ -35,22 +35,29 @@ public interface StartingScanner {
     /** Currently, there is no snapshot, need to wait for the snapshot to be generated. */
     class NoSnapshot implements Result {}
 
+    static ScannedResult fromPlan(SnapshotReader.Plan plan) {
+        return new ScannedResult(plan);
+    }
+
     /** Result with scanned snapshot. Next snapshot should be the current snapshot plus 1. */
     class ScannedResult implements Result {
-        private final long currentSnapshotId;
-        private final List<DataSplit> splits;
 
-        public ScannedResult(long currentSnapshotId, List<DataSplit> splits) {
-            this.currentSnapshotId = currentSnapshotId;
-            this.splits = splits;
+        private final SnapshotReader.Plan plan;
+
+        public ScannedResult(SnapshotReader.Plan plan) {
+            this.plan = plan;
         }
 
         public long currentSnapshotId() {
-            return currentSnapshotId;
+            return plan.snapshotId();
         }
 
         public List<DataSplit> splits() {
-            return splits;
+            return (List) plan.splits();
+        }
+
+        public SnapshotReader.Plan plan() {
+            return plan;
         }
     }
 

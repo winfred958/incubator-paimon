@@ -2,6 +2,7 @@
 .classpath
 .idea/*
 !.idea/vcs.xml
+!.idea/icon.png
 .metadata
 .settings
 .project
@@ -16,6 +17,4 @@ target
 .DS_Store
 *.ipr
 *.iws
-test/coverage
 dependency-reduced-pom.xml
-jacoco.exec

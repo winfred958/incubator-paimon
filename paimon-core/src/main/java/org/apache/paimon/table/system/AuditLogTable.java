@@ -19,13 +19,14 @@
 package org.apache.paimon.table.system;
 
 import org.apache.paimon.CoreOptions;
+import org.apache.paimon.Snapshot;
 import org.apache.paimon.consumer.ConsumerManager;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.BinaryString;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.disk.IOManager;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
-import org.apache.paimon.operation.ScanKind;
 import org.apache.paimon.predicate.LeafPredicate;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.predicate.PredicateBuilder;
@@ -35,12 +36,15 @@ import org.apache.paimon.table.DataTable;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.ReadonlyTable;
 import org.apache.paimon.table.Table;
-import org.apache.paimon.table.source.DataSplit;
 import org.apache.paimon.table.source.InnerStreamTableScan;
 import org.apache.paimon.table.source.InnerTableRead;
 import org.apache.paimon.table.source.InnerTableScan;
+import org.apache.paimon.table.source.RichPlan;
+import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.table.source.Split;
-import org.apache.paimon.table.source.snapshot.SnapshotSplitReader;
+import org.apache.paimon.table.source.SplitGenerator;
+import org.apache.paimon.table.source.TableRead;
+import org.apache.paimon.table.source.snapshot.SnapshotReader;
 import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.RowKind;
 import org.apache.paimon.types.RowType;
@@ -48,6 +52,7 @@ import org.apache.paimon.types.VarCharType;
 import org.apache.paimon.utils.Filter;
 import org.apache.paimon.utils.ProjectedRow;
 import org.apache.paimon.utils.SnapshotManager;
+import org.apache.paimon.utils.TagManager;
 
 import org.apache.paimon.shade.guava30.com.google.common.primitives.Ints;
 
@@ -120,8 +125,8 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
     }
 
     @Override
-    public SnapshotSplitReader newSnapshotSplitReader() {
-        return new AuditLogDataSplitReader(dataTable.newSnapshotSplitReader());
+    public SnapshotReader newSnapshotReader() {
+        return new AuditLogDataReader(dataTable.newSnapshotReader());
     }
 
     @Override
@@ -147,6 +152,11 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
     @Override
     public SnapshotManager snapshotManager() {
         return dataTable.snapshotManager();
+    }
+
+    @Override
+    public TagManager tagManager() {
+        return dataTable.tagManager();
     }
 
     @Override
@@ -178,55 +188,83 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
         return Optional.of(PredicateBuilder.and(result));
     }
 
-    private class AuditLogDataSplitReader implements SnapshotSplitReader {
+    private class AuditLogDataReader implements SnapshotReader {
 
-        private final SnapshotSplitReader snapshotSplitReader;
+        private final SnapshotReader snapshotReader;
 
-        private AuditLogDataSplitReader(SnapshotSplitReader snapshotSplitReader) {
-            this.snapshotSplitReader = snapshotSplitReader;
+        private AuditLogDataReader(SnapshotReader snapshotReader) {
+            this.snapshotReader = snapshotReader;
+        }
+
+        @Override
+        public SnapshotManager snapshotManager() {
+            return snapshotReader.snapshotManager();
         }
 
         @Override
         public ConsumerManager consumerManager() {
-            return snapshotSplitReader.consumerManager();
+            return snapshotReader.consumerManager();
         }
 
-        public SnapshotSplitReader withSnapshot(long snapshotId) {
-            snapshotSplitReader.withSnapshot(snapshotId);
+        @Override
+        public SplitGenerator splitGenerator() {
+            return snapshotReader.splitGenerator();
+        }
+
+        public SnapshotReader withSnapshot(long snapshotId) {
+            snapshotReader.withSnapshot(snapshotId);
             return this;
         }
 
-        public SnapshotSplitReader withFilter(Predicate predicate) {
-            convert(predicate).ifPresent(snapshotSplitReader::withFilter);
+        public SnapshotReader withSnapshot(Snapshot snapshot) {
+            snapshotReader.withSnapshot(snapshot);
             return this;
         }
 
-        public SnapshotSplitReader withKind(ScanKind scanKind) {
-            snapshotSplitReader.withKind(scanKind);
+        public SnapshotReader withFilter(Predicate predicate) {
+            convert(predicate).ifPresent(snapshotReader::withFilter);
             return this;
         }
 
-        public SnapshotSplitReader withLevelFilter(Filter<Integer> levelFilter) {
-            snapshotSplitReader.withLevelFilter(levelFilter);
+        public SnapshotReader withMode(ScanMode scanMode) {
+            snapshotReader.withMode(scanMode);
             return this;
         }
 
-        public SnapshotSplitReader withBucket(int bucket) {
-            snapshotSplitReader.withBucket(bucket);
+        public SnapshotReader withLevelFilter(Filter<Integer> levelFilter) {
+            snapshotReader.withLevelFilter(levelFilter);
             return this;
         }
 
-        public List<DataSplit> splits() {
-            return snapshotSplitReader.splits();
+        public SnapshotReader withBucket(int bucket) {
+            snapshotReader.withBucket(bucket);
+            return this;
         }
 
-        public List<DataSplit> overwriteSplits() {
-            return snapshotSplitReader.overwriteSplits();
+        @Override
+        public SnapshotReader withBucketFilter(Filter<Integer> bucketFilter) {
+            snapshotReader.withBucketFilter(bucketFilter);
+            return this;
+        }
+
+        @Override
+        public Plan read() {
+            return snapshotReader.read();
+        }
+
+        @Override
+        public Plan readOverwrittenChanges() {
+            return snapshotReader.readOverwrittenChanges();
+        }
+
+        @Override
+        public Plan readIncrementalDiff(Snapshot before) {
+            return snapshotReader.readIncrementalDiff(before);
         }
 
         @Override
         public List<BinaryRow> partitions() {
-            return snapshotSplitReader.partitions();
+            return snapshotReader.partitions();
         }
     }
 
@@ -270,7 +308,7 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
         }
 
         @Override
-        public Plan plan() {
+        public RichPlan plan() {
             return streamScan.plan();
         }
 
@@ -291,6 +329,11 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
         }
 
         @Override
+        public void restore(@Nullable Long nextSnapshotId, ScanMode scanMode) {
+            streamScan.restore(nextSnapshotId, scanMode);
+        }
+
+        @Override
         public void notifyCheckpointComplete(@Nullable Long nextSnapshot) {
             streamScan.notifyCheckpointComplete(nextSnapshot);
         }
@@ -303,7 +346,7 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
         private int[] readProjection;
 
         private AuditLogRead(InnerTableRead dataRead) {
-            this.dataRead = dataRead;
+            this.dataRead = dataRead.forceKeepDelete();
             this.readProjection = defaultProjection();
         }
 
@@ -350,6 +393,12 @@ public class AuditLogTable implements DataTable, ReadonlyTable {
             }
             this.readProjection = Ints.toArray(readProjection);
             dataRead.withProjection(dataProjection.toArray(new int[0][]));
+            return this;
+        }
+
+        @Override
+        public TableRead withIOManager(IOManager ioManager) {
+            this.dataRead.withIOManager(ioManager);
             return this;
         }
 

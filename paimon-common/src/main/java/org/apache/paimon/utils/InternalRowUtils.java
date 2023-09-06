@@ -257,6 +257,7 @@ public class InternalRowUtils {
                 break;
             case INTEGER:
             case DATE:
+            case TIME_WITHOUT_TIME_ZONE:
                 ret = Integer.compare((int) x, (int) y);
                 break;
             case BIGINT:
@@ -274,9 +275,24 @@ public class InternalRowUtils {
                 Timestamp yDD1 = (Timestamp) y;
                 ret = xDD1.compareTo(yDD1);
                 break;
+            case BINARY:
+            case VARBINARY:
+                ret = byteArrayCompare((byte[]) x, (byte[]) y);
+                break;
             default:
                 throw new IllegalArgumentException();
         }
         return ret;
+    }
+
+    private static int byteArrayCompare(byte[] array1, byte[] array2) {
+        for (int i = 0, j = 0; i < array1.length && j < array2.length; i++, j++) {
+            int a = (array1[i] & 0xff);
+            int b = (array2[j] & 0xff);
+            if (a != b) {
+                return a - b;
+            }
+        }
+        return array1.length - array2.length;
     }
 }

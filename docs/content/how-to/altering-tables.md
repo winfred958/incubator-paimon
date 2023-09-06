@@ -80,8 +80,18 @@ ALTER TABLE my_table RENAME TO my_table_new;
 
 {{< tab "Spark3" >}}
 
+The simplest sql to call is:
 ```sql
 ALTER TABLE my_table RENAME TO my_table_new;
+```
+
+Note that: we can rename paimon table in spark this way:
+```sql
+ALTER TABLE [catalog.[database.]]test1 RENAME to [database.]test2;
+```
+But we can't put catalog name before the renamed-to table, it will throw an error if we write sql like this:
+```sql
+ALTER TABLE catalog.database.test1 RENAME to catalog.database.test2;
 ```
 
 {{< /tab >}}
@@ -177,35 +187,6 @@ ALTER TABLE my_table ADD COLUMN c1 VARCHAR;
 
 {{< /tabs >}}
 
-## Adding Column Position
-
-To add a new column with specified position, use FIRST or AFTER col_name.
-
-{{< tabs "add-column-position" >}}
-
-
-{{< tab "Flink" >}}
-
-```sql
-ALTER TABLE my_table ADD c INT FIRST;
-
-ALTER TABLE my_table ADD c INT AFTER b;
-```
-
-{{< /tab >}}
-
-{{< tab "Spark3" >}}
-
-```sql
-ALTER TABLE my_table ADD COLUMN c INT FIRST;
-
-ALTER TABLE my_table ADD COLUMN c INT AFTER b;
-```
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
 ## Renaming Column Name
 The following SQL renames column `c0` in table `my_table` to `c1`.
 
@@ -248,7 +229,8 @@ ALTER TABLE my_table RENAME COLUMN c0 TO c1;
 
 ## Dropping Columns
 
-The following SQL drops two columns `c1` and `c2` from table `my_table`.
+The following SQL drops two columns `c1` and `c2` from table `my_table`. In hive catalog, you need to ensure disable `hive.metastore.disallow.incompatible.col.type.changes` in your hive server,
+otherwise this operation may fail, throws an exception like `The following columns have types incompatible with the existing columns in their respective positions`.
 
 {{< tabs "drop-columns-example" >}}
 
@@ -334,7 +316,7 @@ The following SQL changes comment of column `buy_count` to `buy count`.
 {{< tab "Flink" >}}
 
 ```sql
-ALTER TABLE my_table MODIFY buy_count BIGINT COMMENT 'buy count'
+ALTER TABLE my_table MODIFY buy_count BIGINT COMMENT 'buy count';
 ```
 
 {{< /tab >}}
@@ -349,7 +331,34 @@ ALTER TABLE my_table ALTER COLUMN buy_count COMMENT 'buy count';
 
 {{< /tabs >}}
 
+## Adding Column Position
 
+To add a new column with specified position, use FIRST or AFTER col_name.
+
+{{< tabs "add-column-position" >}}
+
+
+{{< tab "Flink" >}}
+
+```sql
+ALTER TABLE my_table ADD c INT FIRST;
+
+ALTER TABLE my_table ADD c INT AFTER b;
+```
+
+{{< /tab >}}
+
+{{< tab "Spark3" >}}
+
+```sql
+ALTER TABLE my_table ADD COLUMN c INT FIRST;
+
+ALTER TABLE my_table ADD COLUMN c INT AFTER b;
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Changing Column Position
 
@@ -360,9 +369,9 @@ To modify an existent column to a new position, use FIRST or AFTER col_name.
 {{< tab "Flink" >}}
 
 ```sql
-ALTER TABLE my_table ALTER col_a FIRST;
+ALTER TABLE my_table MODIFY col_a DOUBLE FIRST;
 
-ALTER TABLE my_table ALTER col_a AFTER col_b;
+ALTER TABLE my_table MODIFY col_a DOUBLE AFTER col_b;
 ```
 
 {{< /tab >}}
@@ -378,6 +387,7 @@ ALTER TABLE my_table ALTER COLUMN col_a AFTER col_b;
 {{< /tab >}}
 
 {{< /tabs >}}
+
 ## Changing Column Type
 
 The following SQL changes type of column `col_a` to `DOUBLE`.
@@ -395,7 +405,7 @@ ALTER TABLE my_table MODIFY col_a DOUBLE;
 {{< tab "Spark3" >}}
 
 ```sql
-ALTER TABLE my_table ALTER COLUMN col_a TYPE 'DOUBLE';
+ALTER TABLE my_table ALTER COLUMN col_a TYPE DOUBLE;
 ```
 
 {{< /tab >}}
@@ -404,6 +414,61 @@ ALTER TABLE my_table ALTER COLUMN col_a TYPE 'DOUBLE';
 
 ```sql
 ALTER TABLE my_table ALTER COLUMN col_a SET DATA TYPE DOUBLE;
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Supported Type Conversions.
+
+{{< generated/column_type_conversion >}}
+
+## Adding watermark
+
+The following SQL adds a computed column `ts` from existing column `log_ts`, and a watermark with strategy `ts - INTERVAL '1' HOUR` on column `ts` which is marked as event time attribute of table `my_table`.
+
+{{< tabs "add-watermark" >}}
+
+{{< tab "Flink" >}}
+
+```sql
+ALTER TABLE my_table ADD (
+    ts AS TO_TIMESTAMP(log_ts) AFTER log_ts,
+    WATERMARK FOR ts AS ts - INTERVAL '1' HOUR
+);
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+## Dropping watermark
+
+The following SQL drops the watermark of table `my_table`.
+
+{{< tabs "drop-watermark" >}}
+
+{{< tab "Flink" >}}
+
+```sql
+ALTER TABLE my_table DROP WATERMARK;
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+## Changing watermark
+
+The following SQL modifies the watermark strategy to `ts - INTERVAL '2' HOUR`.
+
+{{< tabs "change-watermark" >}}
+
+{{< tab "Flink" >}}
+
+```sql
+ALTER TABLE my_table MODIFY WATERMARK FOR ts AS ts - INTERVAL '2' HOUR
 ```
 
 {{< /tab >}}

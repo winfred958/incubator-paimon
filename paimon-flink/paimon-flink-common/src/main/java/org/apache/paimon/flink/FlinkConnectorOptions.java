@@ -23,6 +23,7 @@ import org.apache.paimon.CoreOptions.StreamingReadMode;
 import org.apache.paimon.annotation.Documentation.ExcludeFromDocumentation;
 import org.apache.paimon.options.ConfigOption;
 import org.apache.paimon.options.ConfigOptions;
+import org.apache.paimon.options.MemorySize;
 import org.apache.paimon.options.description.DescribedEnum;
 import org.apache.paimon.options.description.Description;
 import org.apache.paimon.options.description.InlineElement;
@@ -67,6 +68,20 @@ public class FlinkConnectorOptions {
                                                             + "."))
                                     .build());
 
+    public static final ConfigOption<Integer> LOG_SYSTEM_PARTITIONS =
+            ConfigOptions.key("log.system.partitions")
+                    .intType()
+                    .defaultValue(1)
+                    .withDescription(
+                            "The number of partitions of the log system. If log system is kafka, this is kafka partitions.");
+
+    public static final ConfigOption<Integer> LOG_SYSTEM_REPLICATION =
+            ConfigOptions.key("log.system.replication")
+                    .intType()
+                    .defaultValue(1)
+                    .withDescription(
+                            "The number of replication of the log system. If log system is kafka, this is kafka replicationFactor.");
+
     public static final ConfigOption<Integer> SINK_PARALLELISM =
             ConfigOptions.key("sink.parallelism")
                     .intType()
@@ -86,31 +101,22 @@ public class FlinkConnectorOptions {
                                     + "for each statement individually by also considering the global configuration. "
                                     + "If user enable the scan.infer-parallelism, the planner will derive the parallelism by inferred parallelism.");
 
+    public static final ConfigOption<Integer> UNAWARE_BUCKET_COMPACTION_PARALLELISM =
+            ConfigOptions.key("unaware-bucket.compaction.parallelism")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Defines a custom parallelism for the unaware-bucket table compaction job. "
+                                    + "By default, if this option is not defined, the planner will derive the parallelism "
+                                    + "for each statement individually by also considering the global configuration.");
+
     public static final ConfigOption<Boolean> INFER_SCAN_PARALLELISM =
             ConfigOptions.key("scan.infer-parallelism")
                     .booleanType()
-                    .defaultValue(false)
+                    .defaultValue(true)
                     .withDescription(
-                            "If it is false, parallelism of source are set by "
-                                    + SCAN_PARALLELISM.key()
-                                    + ". Otherwise, source parallelism is inferred from splits number (batch mode) or bucket number(streaming mode).");
-
-    public static final ConfigOption<Boolean> STREAMING_READ_ATOMIC =
-            ConfigOptions.key("streaming-read-atomic")
-                    .booleanType()
-                    .defaultValue(false)
-                    .withDescription(
-                            Description.builder()
-                                    .text(
-                                            "The option to enable return per iterator instead of per record in streaming read.")
-                                    .text(
-                                            "This can ensure that there will be no checkpoint segmentation in iterator consumption.")
-                                    .linebreak()
-                                    .text(
-                                            "By default, streaming source checkpoint will be performed in any time,"
-                                                    + " this means 'UPDATE_BEFORE' and 'UPDATE_AFTER' can be split into two checkpoint."
-                                                    + " Downstream can see intermediate state.")
-                                    .build());
+                            "If it is false, parallelism of source are set by global parallelism."
+                                    + " Otherwise, source parallelism is inferred from splits number (batch mode) or bucket number(streaming mode).");
 
     @Deprecated
     @ExcludeFromDocumentation("Deprecated")
@@ -181,6 +187,85 @@ public class FlinkConnectorOptions {
                             "How many splits should assign to subtask per batch in StaticFileStoreSplitEnumerator "
                                     + "to avoid exceed `akka.framesize` limit.");
 
+    public static final ConfigOption<SplitAssignMode> SCAN_SPLIT_ENUMERATOR_ASSIGN_MODE =
+            key("scan.split-enumerator.mode")
+                    .enumType(SplitAssignMode.class)
+                    .defaultValue(SplitAssignMode.FAIR)
+                    .withDescription(
+                            "The mode used by StaticFileStoreSplitEnumerator to assign splits.");
+
+    /* Sink writer allocate segments from managed memory. */
+    public static final ConfigOption<Boolean> SINK_USE_MANAGED_MEMORY =
+            ConfigOptions.key("sink.use-managed-memory-allocator")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "If true, flink sink will use managed memory for merge tree; otherwise, "
+                                    + "it will create an independent memory allocator.");
+
+    public static final ConfigOption<Boolean> SCAN_REMOVE_NORMALIZE =
+            key("scan.remove-normalize")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDeprecatedKeys("log.scan.remove-normalize")
+                    .withDescription(
+                            "Whether to force the removal of the normalize node when streaming read."
+                                    + " Note: This is dangerous and is likely to cause data errors if downstream"
+                                    + " is used to calculate aggregation and the input is not complete changelog.");
+
+    /**
+     * Weight of writer buffer in managed memory, Flink will compute the memory size for writer
+     * according to the weight, the actual memory used depends on the running environment.
+     */
+    public static final ConfigOption<MemorySize> SINK_MANAGED_WRITER_BUFFER_MEMORY =
+            ConfigOptions.key("sink.managed.writer-buffer-memory")
+                    .memoryType()
+                    .defaultValue(MemorySize.ofMebiBytes(256))
+                    .withDescription(
+                            "Weight of writer buffer in managed memory, Flink will compute the memory size "
+                                    + "for writer according to the weight, the actual memory used depends on the running environment.");
+
+    public static final ConfigOption<Boolean> SCAN_PUSH_DOWN =
+            ConfigOptions.key("scan.push-down")
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription(
+                            "If true, flink will push down projection, filters, limit to the source. "
+                                    + "The cost is that it is difficult to reuse the source in a job.");
+
+    public static final ConfigOption<Boolean> SOURCE_CHECKPOINT_ALIGN_ENABLED =
+            ConfigOptions.key("source.checkpoint-align.enabled")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Whether to align the flink checkpoint with the snapshot of the paimon table, If true, a checkpoint will only be made if a snapshot is consumed.");
+
+    public static final ConfigOption<Duration> SOURCE_CHECKPOINT_ALIGN_TIMEOUT =
+            ConfigOptions.key("source.checkpoint-align.timeout")
+                    .durationType()
+                    .defaultValue(Duration.ofSeconds(30))
+                    .withDescription(
+                            "If the new snapshot has not been generated when the checkpoint starts to trigger, the enumerator will block the checkpoint and wait for the new snapshot. Set the maximum waiting time to avoid infinite waiting, if timeout, the checkpoint will fail. Note that it should be set smaller than the checkpoint timeout.");
+
+    public static final ConfigOption<Boolean> LOOKUP_ASYNC =
+            ConfigOptions.key("lookup.async")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription("Whether to enable async lookup join.");
+
+    public static final ConfigOption<Integer> LOOKUP_ASYNC_THREAD_NUMBER =
+            ConfigOptions.key("lookup.async-thread-number")
+                    .intType()
+                    .defaultValue(16)
+                    .withDescription("The thread number for lookup async.");
+
+    public static final ConfigOption<Boolean> SINK_AUTO_TAG_FOR_SAVEPOINT =
+            ConfigOptions.key("sink.savepoint.auto-tag")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "If true, a tag will be automatically created for the snapshot created by flink savepoint.");
+
     public static List<ConfigOption<?>> getOptions() {
         final Field[] fields = FlinkConnectorOptions.class.getFields();
         final List<ConfigOption<?>> list = new ArrayList<>(fields.length);
@@ -208,6 +293,36 @@ public class FlinkConnectorOptions {
         private final String description;
 
         WatermarkEmitStrategy(String value, String description) {
+            this.value = value;
+            this.description = description;
+        }
+
+        @Override
+        public String toString() {
+            return value;
+        }
+
+        @Override
+        public InlineElement getDescription() {
+            return text(description);
+        }
+    }
+
+    /**
+     * Split assign mode for {@link org.apache.paimon.flink.source.StaticFileStoreSplitEnumerator}.
+     */
+    public enum SplitAssignMode implements DescribedEnum {
+        FAIR(
+                "fair",
+                "Distribute splits evenly when batch reading to prevent a few tasks from reading all."),
+        PREEMPTIVE(
+                "preemptive",
+                "Distribute splits preemptively according to the consumption speed of the task.");
+
+        private final String value;
+        private final String description;
+
+        SplitAssignMode(String value, String description) {
             this.value = value;
             this.description = description;
         }

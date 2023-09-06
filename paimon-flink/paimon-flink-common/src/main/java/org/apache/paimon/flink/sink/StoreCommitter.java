@@ -18,36 +18,31 @@
 
 package org.apache.paimon.flink.sink;
 
+import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.manifest.ManifestCommittable;
 import org.apache.paimon.table.sink.CommitMessage;
+import org.apache.paimon.table.sink.CommitMessageImpl;
 import org.apache.paimon.table.sink.TableCommit;
 import org.apache.paimon.table.sink.TableCommitImpl;
 
+import javax.annotation.Nullable;
+
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 /** {@link Committer} for dynamic store. */
-public class StoreCommitter implements Committer {
+public class StoreCommitter implements Committer<Committable, ManifestCommittable> {
 
     private final TableCommitImpl commit;
+    @Nullable private final CommitterMetrics metrics;
 
-    public StoreCommitter(TableCommit commit) {
+    public StoreCommitter(TableCommit commit, @Nullable CommitterMetrics metrics) {
         this.commit = (TableCommitImpl) commit;
-    }
-
-    @Override
-    public List<ManifestCommittable> filterRecoveredCommittables(
-            List<ManifestCommittable> globalCommittables) {
-        Set<Long> identifiers =
-                commit.filterCommitted(
-                        globalCommittables.stream()
-                                .map(ManifestCommittable::identifier)
-                                .collect(Collectors.toSet()));
-        return globalCommittables.stream()
-                .filter(m -> identifiers.contains(m.identifier()))
-                .collect(Collectors.toList());
+        this.metrics = metrics;
     }
 
     @Override
@@ -74,10 +69,57 @@ public class StoreCommitter implements Committer {
     public void commit(List<ManifestCommittable> committables)
             throws IOException, InterruptedException {
         commit.commitMultiple(committables);
+        calcNumBytesAndRecordsOut(committables);
+    }
+
+    @Override
+    public int filterAndCommit(List<ManifestCommittable> globalCommittables) {
+        return commit.filterAndCommitMultiple(globalCommittables);
+    }
+
+    @Override
+    public Map<Long, List<Committable>> groupByCheckpoint(Collection<Committable> committables) {
+        Map<Long, List<Committable>> grouped = new HashMap<>();
+        for (Committable c : committables) {
+            grouped.computeIfAbsent(c.checkpointId(), k -> new ArrayList<>()).add(c);
+        }
+        return grouped;
     }
 
     @Override
     public void close() throws Exception {
         commit.close();
+    }
+
+    private void calcNumBytesAndRecordsOut(List<ManifestCommittable> committables) {
+        if (metrics == null) {
+            return;
+        }
+
+        long bytesOut = 0;
+        long recordsOut = 0;
+        for (ManifestCommittable committable : committables) {
+            List<CommitMessage> commitMessages = committable.fileCommittables();
+            for (CommitMessage commitMessage : commitMessages) {
+                long dataFileSizeInc =
+                        calcTotalFileSize(
+                                ((CommitMessageImpl) commitMessage).newFilesIncrement().newFiles());
+                long dataFileRowCountInc =
+                        calcTotalFileRowCount(
+                                ((CommitMessageImpl) commitMessage).newFilesIncrement().newFiles());
+                bytesOut += dataFileSizeInc;
+                recordsOut += dataFileRowCountInc;
+            }
+        }
+        metrics.increaseNumBytesOut(bytesOut);
+        metrics.increaseNumRecordsOut(recordsOut);
+    }
+
+    private static long calcTotalFileSize(List<DataFileMeta> files) {
+        return files.stream().mapToLong(DataFileMeta::fileSize).reduce(Long::sum).orElse(0);
+    }
+
+    private static long calcTotalFileRowCount(List<DataFileMeta> files) {
+        return files.stream().mapToLong(DataFileMeta::rowCount).reduce(Long::sum).orElse(0);
     }
 }

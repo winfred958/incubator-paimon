@@ -19,7 +19,11 @@
 package org.apache.paimon.flink.sink.cdc;
 
 import org.apache.paimon.CoreOptions;
+import org.apache.paimon.catalog.Catalog;
+import org.apache.paimon.catalog.CatalogUtils;
+import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.flink.FlinkCatalogFactory;
 import org.apache.paimon.flink.util.AbstractTestBase;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
@@ -42,6 +46,7 @@ import org.apache.paimon.utils.TraceableFileIO;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -52,34 +57,63 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
-/** IT cases for {@link FlinkCdcSyncTableSinkBuilder}. */
+/** IT cases for {@link CdcSinkBuilder}. */
 public class FlinkCdcSyncTableSinkITCase extends AbstractTestBase {
+
+    private static final String DATABASE_NAME = "test";
+    private static final String TABLE_NAME = "test_tbl";
 
     @TempDir java.nio.file.Path tempDir;
 
     @Test
     @Timeout(120)
     public void testRandomCdcEvents() throws Exception {
+        innerTestRandomCdcEvents(ThreadLocalRandom.current().nextInt(5) + 1, false);
+    }
+
+    @Test
+    @Timeout(120)
+    public void testRandomCdcEventsDynamicBucket() throws Exception {
+        innerTestRandomCdcEvents(-1, false);
+    }
+
+    @Disabled
+    @Test
+    @Timeout(120)
+    public void testRandomCdcEventsGlobalDynamicBucket() throws Exception {
+        innerTestRandomCdcEvents(-1, true);
+    }
+
+    private void innerTestRandomCdcEvents(int numBucket, boolean globalIndex) throws Exception {
         ThreadLocalRandom random = ThreadLocalRandom.current();
 
         int numEvents = random.nextInt(1500) + 1;
         int numSchemaChanges = Math.min(numEvents / 2, random.nextInt(10) + 1);
         int numPartitions = random.nextInt(3) + 1;
         int numKeys = random.nextInt(150) + 1;
-        int numBucket = random.nextInt(5) + 1;
         boolean enableFailure = random.nextBoolean();
 
         TestTable testTable =
-                new TestTable("test_tbl", numEvents, numSchemaChanges, numPartitions, numKeys);
+                new TestTable(TABLE_NAME, numEvents, numSchemaChanges, numPartitions, numKeys);
 
         Path tablePath;
         FileIO fileIO;
         String failingName = UUID.randomUUID().toString();
         if (enableFailure) {
-            tablePath = new Path(FailingFileIO.getFailingPath(failingName, tempDir.toString()));
+            tablePath =
+                    new Path(
+                            FailingFileIO.getFailingPath(
+                                    failingName,
+                                    CatalogUtils.stringifyPath(
+                                            tempDir.toString(), DATABASE_NAME, TABLE_NAME)));
             fileIO = new FailingFileIO();
         } else {
-            tablePath = new Path(TraceableFileIO.SCHEME + "://" + tempDir.toString());
+            tablePath =
+                    new Path(
+                            TraceableFileIO.SCHEME
+                                    + "://"
+                                    + CatalogUtils.stringifyPath(
+                                            tempDir.toString(), DATABASE_NAME, TABLE_NAME));
             fileIO = LocalFileIO.create();
         }
 
@@ -92,7 +126,7 @@ public class FlinkCdcSyncTableSinkITCase extends AbstractTestBase {
                         fileIO,
                         testTable.initialRowType(),
                         Collections.singletonList("pt"),
-                        Arrays.asList("pt", "k"),
+                        globalIndex ? Collections.singletonList("k") : Arrays.asList("pt", "k"),
                         numBucket);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -104,11 +138,19 @@ public class FlinkCdcSyncTableSinkITCase extends AbstractTestBase {
         TestCdcSourceFunction sourceFunction = new TestCdcSourceFunction(testTable.events());
         DataStreamSource<TestCdcEvent> source = env.addSource(sourceFunction);
         source.setParallelism(2);
-        new FlinkCdcSyncTableSinkBuilder<TestCdcEvent>()
+
+        Options catalogOptions = new Options();
+        catalogOptions.set("warehouse", tempDir.toString());
+        Catalog.Loader catalogLoader =
+                () -> FlinkCatalogFactory.createPaimonCatalog(catalogOptions);
+
+        new CdcSinkBuilder<TestCdcEvent>()
                 .withInput(source)
                 .withParserFactory(TestCdcEventParser::new)
                 .withTable(table)
                 .withParallelism(3)
+                .withIdentifier(Identifier.create(DATABASE_NAME, TABLE_NAME))
+                .withCatalogLoader(catalogLoader)
                 .build();
 
         // enable failure when running jobs if needed
@@ -141,6 +183,7 @@ public class FlinkCdcSyncTableSinkITCase extends AbstractTestBase {
             throws Exception {
         Options conf = new Options();
         conf.set(CoreOptions.BUCKET, numBucket);
+        conf.set(CoreOptions.DYNAMIC_BUCKET_TARGET_ROW_NUM, 100L);
         conf.set(CoreOptions.WRITE_BUFFER_SIZE, new MemorySize(4096 * 3));
         conf.set(CoreOptions.PAGE_SIZE, new MemorySize(4096));
 

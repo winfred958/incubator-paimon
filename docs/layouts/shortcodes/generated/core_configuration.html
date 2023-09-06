@@ -1,3 +1,21 @@
+{{/*
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+*/}}
 <table class="configuration table table-bordered">
     <thead>
         <tr>
@@ -30,13 +48,25 @@
             <td><h5>changelog-producer</h5></td>
             <td style="word-wrap: break-word;">none</td>
             <td><p>Enum</p></td>
-            <td>Whether to double write to a changelog file. This changelog file keeps the details of data changes, it can be read directly during stream reads.<br /><br />Possible values:<ul><li>"none": No changelog file.</li><li>"input": Double write to a changelog file when flushing memory table, the changelog is from input.</li><li>"full-compaction": Generate changelog files with each full compaction.</li><li>"lookup": Generate changelog files through 'lookup' before committing the data writing.</li></ul></td>
+            <td>Whether to double write to a changelog file. This changelog file keeps the details of data changes, it can be read directly during stream reads. This can be applied to tables with primary keys. <br /><br />Possible values:<ul><li>"none": No changelog file.</li><li>"input": Double write to a changelog file when flushing memory table, the changelog is from input.</li><li>"full-compaction": Generate changelog files with each full compaction.</li><li>"lookup": Generate changelog files through 'lookup' before committing the data writing.</li></ul></td>
         </tr>
         <tr>
             <td><h5>changelog-producer.row-deduplicate</h5></td>
             <td style="word-wrap: break-word;">false</td>
             <td>Boolean</td>
             <td>Whether to generate -U, +U changelog for the same record. This configuration is only valid for the changelog-producer is lookup or full-compaction.</td>
+        </tr>
+        <tr>
+            <td><h5>commit.callback.#.param</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>String</td>
+            <td>Parameter string for the constructor of class #. Callback class should parse the parameter by itself.</td>
+        </tr>
+        <tr>
+            <td><h5>commit.callbacks</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>String</td>
+            <td>A list of commit callback classes to be called after a successful commit. Class names are connected with comma (example: com.test.CallbackA,com.sample.CallbackB).</td>
         </tr>
         <tr>
             <td><h5>commit.force-compact</h5></td>
@@ -49,12 +79,6 @@
             <td style="word-wrap: break-word;">200</td>
             <td>Integer</td>
             <td>The size amplification is defined as the amount (in percentage) of additional storage needed to store a single byte of data in the merge tree for changelog mode table.</td>
-        </tr>
-        <tr>
-            <td><h5>compaction.max-sorted-run-num</h5></td>
-            <td style="word-wrap: break-word;">2147483647</td>
-            <td>Integer</td>
-            <td>The maximum sorted run number to pick for compaction. This value avoids merging too much sorted runs at the same time during compaction, which may lead to OutOfMemoryError.</td>
         </tr>
         <tr>
             <td><h5>compaction.max.file-num</h5></td>
@@ -81,10 +105,28 @@
             <td>Consumer id for recording the offset of consumption in the storage.</td>
         </tr>
         <tr>
+            <td><h5>consumer.expiration-time</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Duration</td>
+            <td>The expiration interval of consumer files. A consumer file will be expired if it's lifetime after last modification is over this value.</td>
+        </tr>
+        <tr>
             <td><h5>continuous.discovery-interval</h5></td>
             <td style="word-wrap: break-word;">10 s</td>
             <td>Duration</td>
             <td>The discovery interval of continuous reading.</td>
+        </tr>
+        <tr>
+            <td><h5>dynamic-bucket.assigner-parallelism</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Integer</td>
+            <td>Parallelism of assigner operator for dynamic bucket mode, it is related to the number of initialized bucket, too small will lead to insufficient processing speed of assigner.</td>
+        </tr>
+        <tr>
+            <td><h5>dynamic-bucket.target-row-num</h5></td>
+            <td style="word-wrap: break-word;">2000000</td>
+            <td>Long</td>
+            <td>If the bucket is -1, for primary key table, is dynamic bucket mode, this option controls the target row number for one bucket.</td>
         </tr>
         <tr>
             <td><h5>dynamic-partition-overwrite</h5></td>
@@ -111,10 +153,35 @@
             <td>Specify the message format of data files, currently orc, parquet and avro are supported.<br /><br />Possible values:<ul><li>"orc": ORC file format.</li><li>"parquet": Parquet file format.</li><li>"avro": Avro file format.</li></ul></td>
         </tr>
         <tr>
+            <td><h5>file.format.per.level</h5></td>
+            <td style="word-wrap: break-word;"></td>
+            <td>Map</td>
+            <td>Define different file format for different level, you can add the conf like this: 'file.format.per.level' = '0:avro,3:parquet', if the file format for level is not provided, the default format which set by `file.format` will be used.</td>
+        </tr>
+        <tr>
             <td><h5>full-compaction.delta-commits</h5></td>
             <td style="word-wrap: break-word;">(none)</td>
             <td>Integer</td>
             <td>Full compaction will be constantly triggered after delta commits.</td>
+        </tr>
+        <tr>
+            <td><h5>incremental-between</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>String</td>
+            <td>Read incremental changes between start snapshot (exclusive) and end snapshot, for example, '5,10' means changes between snapshot 5 and snapshot 10.</td>
+        </tr>
+        <tr>
+            <td><h5>incremental-between-timestamp</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>String</td>
+            <td>Read incremental changes between start timestamp (exclusive) and end timestamp, for example, 't1,t2' means changes between timestamp t1 and timestamp t2.</td>
+        </tr>
+        <tr>
+            <td><h5>local-merge-buffer-size</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>MemorySize</td>
+            <td>Local merge will buffer and merge input records before they're shuffled by bucket and written into sink. The buffer will be flushed when it is full.
+Mainly to resolve data skew on primary keys. We recommend starting with 64 mb when trying out this feature.</td>
         </tr>
         <tr>
             <td><h5>local-sort.max-num-file-handles</h5></td>
@@ -147,12 +214,6 @@
             <td>Specify the key message format of log system with primary key.</td>
         </tr>
         <tr>
-            <td><h5>log.scan.remove-normalize</h5></td>
-            <td style="word-wrap: break-word;">false</td>
-            <td>Boolean</td>
-            <td>Whether to force the removal of the normalize node when streaming read. Note: This is dangerous and is likely to cause data errors if downstream is used to calculate aggregation and the input is not complete changelog.</td>
-        </tr>
-        <tr>
             <td><h5>lookup.cache-file-retention</h5></td>
             <td style="word-wrap: break-word;">1 h</td>
             <td>Duration</td>
@@ -183,6 +244,12 @@
             <td>Specify the message format of manifest files.<br /><br />Possible values:<ul><li>"orc": ORC file format.</li><li>"parquet": Parquet file format.</li><li>"avro": Avro file format.</li></ul></td>
         </tr>
         <tr>
+            <td><h5>manifest.full-compaction-threshold-size</h5></td>
+            <td style="word-wrap: break-word;">16 mb</td>
+            <td>MemorySize</td>
+            <td>The size threshold for triggering full compaction of manifest.</td>
+        </tr>
+        <tr>
             <td><h5>manifest.merge-min-count</h5></td>
             <td style="word-wrap: break-word;">30</td>
             <td>Integer</td>
@@ -198,7 +265,21 @@
             <td><h5>merge-engine</h5></td>
             <td style="word-wrap: break-word;">deduplicate</td>
             <td><p>Enum</p></td>
-            <td>Specify the merge engine for table with primary key.<br /><br />Possible values:<ul><li>"deduplicate": De-duplicate and keep the last row.</li><li>"partial-update": Partial update non-null fields.</li><li>"aggregation": Aggregate fields with same primary key.</li></ul></td>
+            <td>Specify the merge engine for table with primary key.<br /><br />Possible values:<ul><li>"deduplicate": De-duplicate and keep the last row.</li><li>"partial-update": Partial update non-null fields.</li><li>"aggregation": Aggregate fields with same primary key.</li><li>"first-row": De-duplicate and keep the first row.</li></ul></td>
+        </tr>
+        <tr>
+            <td><h5>metadata.stats-mode</h5></td>
+            <td style="word-wrap: break-word;">"truncate(16)"</td>
+            <td>String</td>
+            <td>The mode of metadata stats collection. none, counts, truncate(16), full is available.<br /><ul><li>"none": means disable the metadata stats collection.</li></ul><ul><li>"counts" means only collect the null count.</li></ul><ul><li>"full": means collect the null count, min/max value.</li></ul><ul><li>"truncate(16)": means collect the null count, min/max value with truncated length of 16.</li></ul><ul><li>Field level stats mode can be specified by fields.{field_name}.stats-mode</li></ul></td>
+        </tr>
+        <tr>
+            <td><h5>metastore.partitioned-table</h5></td>
+            <td style="word-wrap: break-word;">false</td>
+            <td>Boolean</td>
+            <td>Whether to create this table as a partitioned table in metastore.
+For example, if you want to list all partitions of a Paimon table in Hive, you need to create this table as a partitioned table in Hive metastore.
+This config option does not affect the default filesystem metastore.</td>
         </tr>
         <tr>
             <td><h5>num-levels</h5></td>
@@ -231,10 +312,34 @@
             <td>Define the default false positive probability for bloom filters.</td>
         </tr>
         <tr>
+            <td><h5>orc.column.encoding.direct</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Integer</td>
+            <td>Comma-separated list of fields for which dictionary encoding is to be skipped in orc.</td>
+        </tr>
+        <tr>
+            <td><h5>orc.dictionary.key.threshold</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Integer</td>
+            <td>If the number of distinct keys in a dictionary is greater than this fraction of the total number of non-null rows, turn off dictionary encoding in orc.  Use 1 to always use dictionary encoding.</td>
+        </tr>
+        <tr>
+            <td><h5>orc.write.batch-size</h5></td>
+            <td style="word-wrap: break-word;">1024</td>
+            <td>Integer</td>
+            <td>write batch size for orc.</td>
+        </tr>
+        <tr>
             <td><h5>page-size</h5></td>
             <td style="word-wrap: break-word;">64 kb</td>
             <td>MemorySize</td>
             <td>Memory page size.</td>
+        </tr>
+        <tr>
+            <td><h5>parquet.enable.dictionary</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Integer</td>
+            <td>Turn off the dictionary encoding for all fields in parquet.</td>
         </tr>
         <tr>
             <td><h5>partial-update.ignore-delete</h5></td>
@@ -306,7 +411,7 @@
             <td><h5>scan.mode</h5></td>
             <td style="word-wrap: break-word;">default</td>
             <td><p>Enum</p></td>
-            <td>Specify the scanning behavior of the source.<br /><br />Possible values:<ul><li>"default": Determines actual startup mode according to other table properties. If "scan.timestamp-millis" is set the actual startup mode will be "from-timestamp", and if "scan.snapshot-id" is set the actual startup mode will be "from-snapshot". Otherwise the actual startup mode will be "latest-full".</li><li>"latest-full": For streaming sources, produces the latest snapshot on the table upon first startup, and continue to read the latest changes. For batch sources, just produce the latest snapshot but does not read new changes.</li><li>"full": Deprecated. Same as "latest-full".</li><li>"latest": For streaming sources, continuously reads latest changes without producing a snapshot at the beginning. For batch sources, behaves the same as the "latest-full" startup mode.</li><li>"compacted-full": For streaming sources, produces a snapshot after the latest compaction on the table upon first startup, and continue to read the latest changes. For batch sources, just produce a snapshot after the latest compaction but does not read new changes. Snapshots of full compaction are picked when scheduled full-compaction is enabled.</li><li>"from-timestamp": For streaming sources, continuously reads changes starting from timestamp specified by "scan.timestamp-millis", without producing a snapshot at the beginning. For batch sources, produces a snapshot at timestamp specified by "scan.timestamp-millis" but does not read new changes.</li><li>"from-snapshot": For streaming sources, continuously reads changes starting from snapshot specified by "scan.snapshot-id", without producing a snapshot at the beginning. For batch sources, produces a snapshot specified by "scan.snapshot-id" but does not read new changes.</li><li>"from-snapshot-full": For streaming sources, produces from snapshot specified by "scan.snapshot-id" on the table upon first startup, and continuously reads changes. For batch sources, produces a snapshot specified by "scan.snapshot-id" but does not read new changes.</li></ul></td>
+            <td>Specify the scanning behavior of the source.<br /><br />Possible values:<ul><li>"default": Determines actual startup mode according to other table properties. If "scan.timestamp-millis" is set the actual startup mode will be "from-timestamp", and if "scan.snapshot-id" or "scan.tag-name" is set the actual startup mode will be "from-snapshot". Otherwise the actual startup mode will be "latest-full".</li><li>"latest-full": For streaming sources, produces the latest snapshot on the table upon first startup, and continue to read the latest changes. For batch sources, just produce the latest snapshot but does not read new changes.</li><li>"full": Deprecated. Same as "latest-full".</li><li>"latest": For streaming sources, continuously reads latest changes without producing a snapshot at the beginning. For batch sources, behaves the same as the "latest-full" startup mode.</li><li>"compacted-full": For streaming sources, produces a snapshot after the latest compaction on the table upon first startup, and continue to read the latest changes. For batch sources, just produce a snapshot after the latest compaction but does not read new changes. Snapshots of full compaction are picked when scheduled full-compaction is enabled.</li><li>"from-timestamp": For streaming sources, continuously reads changes starting from timestamp specified by "scan.timestamp-millis", without producing a snapshot at the beginning. For batch sources, produces a snapshot at timestamp specified by "scan.timestamp-millis" but does not read new changes.</li><li>"from-snapshot": For streaming sources, continuously reads changes starting from snapshot specified by "scan.snapshot-id", without producing a snapshot at the beginning. For batch sources, produces a snapshot specified by "scan.snapshot-id" or "scan.tag-name" but does not read new changes.</li><li>"from-snapshot-full": For streaming sources, produces from snapshot specified by "scan.snapshot-id" on the table upon first startup, and continuously reads changes. For batch sources, produces a snapshot specified by "scan.snapshot-id" but does not read new changes.</li><li>"incremental": Read incremental changes between start and end snapshot or timestamp.</li></ul></td>
         </tr>
         <tr>
             <td><h5>scan.plan-sort-partition</h5></td>
@@ -321,10 +426,22 @@
             <td>Optional snapshot id used in case of "from-snapshot" or "from-snapshot-full" scan mode</td>
         </tr>
         <tr>
+            <td><h5>scan.tag-name</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>String</td>
+            <td>Optional tag name used in case of "from-snapshot" scan mode.</td>
+        </tr>
+        <tr>
             <td><h5>scan.timestamp-millis</h5></td>
             <td style="word-wrap: break-word;">(none)</td>
             <td>Long</td>
             <td>Optional timestamp used in case of "from-timestamp" scan mode.</td>
+        </tr>
+        <tr>
+            <td><h5>sequence.auto-padding</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>String</td>
+            <td>Specify the way of padding precision, if the provided sequence field is used to indicate "time" but doesn't meet the precise.<ul><li>You can specific:</li><li>1. "row-kind-flag": Pads a bit flag to indicate whether it is retract (0) or add (1) message.</li><li>2. "second-to-micro": Pads the sequence field that indicates time with precision of seconds to micro-second.</li><li>3. "millis-to-micro": Pads the sequence field that indicates time with precision of milli-second to micro-second.</li><li>4. Composite pattern: for example, "second-to-micro,row-kind-flag".</li></ul></td>
         </tr>
         <tr>
             <td><h5>sequence.field</h5></td>
@@ -333,16 +450,22 @@
             <td>The field that generates the sequence number for primary key table, the sequence number determines which data is the most recent.</td>
         </tr>
         <tr>
+            <td><h5>sink.watermark-time-zone</h5></td>
+            <td style="word-wrap: break-word;">"UTC"</td>
+            <td>String</td>
+            <td>The time zone to parse the long watermark value to TIMESTAMP value. The default value is 'UTC', which means the watermark is defined on TIMESTAMP column or not defined. If the watermark is defined on TIMESTAMP_LTZ column, the time zone of watermark is user configured time zone, the value should be the user configured local time zone. The option value is either a full name such as 'America/Los_Angeles', or a custom timezone id such as 'GMT-08:00'.</td>
+        </tr>
+        <tr>
             <td><h5>snapshot.num-retained.max</h5></td>
             <td style="word-wrap: break-word;">2147483647</td>
             <td>Integer</td>
-            <td>The maximum number of completed snapshots to retain.</td>
+            <td>The maximum number of completed snapshots to retain. Should be greater than or equal to the minimum number.</td>
         </tr>
         <tr>
             <td><h5>snapshot.num-retained.min</h5></td>
             <td style="word-wrap: break-word;">10</td>
             <td>Integer</td>
-            <td>The minimum number of completed snapshots to retain.</td>
+            <td>The minimum number of completed snapshots to retain. Should be greater than or equal to 1.</td>
         </tr>
         <tr>
             <td><h5>snapshot.time-retained</h5></td>
@@ -355,6 +478,18 @@
             <td style="word-wrap: break-word;">loser-tree</td>
             <td><p>Enum</p></td>
             <td>Specify the sort engine for table with primary key.<br /><br />Possible values:<ul><li>"min-heap": Use min-heap for multiway sorting.</li><li>"loser-tree": Use loser-tree for multiway sorting. Compared with heapsort, loser-tree has fewer comparisons and is more efficient.</li></ul></td>
+        </tr>
+        <tr>
+            <td><h5>sort-spill-buffer-size</h5></td>
+            <td style="word-wrap: break-word;">64 mb</td>
+            <td>MemorySize</td>
+            <td>Amount of data to spill records to disk in spilled sort.</td>
+        </tr>
+        <tr>
+            <td><h5>sort-spill-threshold</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Integer</td>
+            <td>If the maximum number of sort readers exceeds this value, a spill will be attempted. This prevents too many readers from consuming too much memory and causing OOM.</td>
         </tr>
         <tr>
             <td><h5>source.split.open-file-cost</h5></td>
@@ -379,6 +514,30 @@
             <td style="word-wrap: break-word;">false</td>
             <td>Boolean</td>
             <td>Whether to read the changes from overwrite in streaming mode.</td>
+        </tr>
+        <tr>
+            <td><h5>tag.automatic-creation</h5></td>
+            <td style="word-wrap: break-word;">none</td>
+            <td><p>Enum</p></td>
+            <td>Whether to create tag automatically. And how to generate tags.<br /><br />Possible values:<ul><li>"none": No automatically created tags.</li><li>"process-time": Based on the time of the machine, create TAG once the processing time passes period time plus delay.</li><li>"watermark": Based on the watermark of the input, create TAG once the watermark passes period time plus delay.</li></ul></td>
+        </tr>
+        <tr>
+            <td><h5>tag.creation-delay</h5></td>
+            <td style="word-wrap: break-word;">0 ms</td>
+            <td>Duration</td>
+            <td>How long is the delay after the period ends before creating a tag. This can allow some late data to enter the Tag.</td>
+        </tr>
+        <tr>
+            <td><h5>tag.creation-period</h5></td>
+            <td style="word-wrap: break-word;">daily</td>
+            <td><p>Enum</p></td>
+            <td>What frequency is used to generate tags.<br /><br />Possible values:<ul><li>"daily": Generate a tag every day.</li><li>"hourly": Generate a tag every hour.</li><li>"two-hours": Generate a tag every two hours.</li></ul></td>
+        </tr>
+        <tr>
+            <td><h5>tag.num-retained-max</h5></td>
+            <td style="word-wrap: break-word;">(none)</td>
+            <td>Integer</td>
+            <td>The maximum number of tags to retain.</td>
         </tr>
         <tr>
             <td><h5>target-file-size</h5></td>

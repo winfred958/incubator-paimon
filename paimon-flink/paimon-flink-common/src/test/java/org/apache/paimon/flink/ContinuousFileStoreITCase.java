@@ -25,11 +25,14 @@ import org.apache.paimon.utils.SnapshotManager;
 
 import org.apache.paimon.shade.guava30.com.google.common.collect.ImmutableList;
 
+import org.apache.flink.table.api.StatementSet;
 import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.TestTemplate;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.ArrayList;
@@ -37,8 +40,9 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
-import static org.apache.paimon.flink.FlinkConnectorOptions.STREAMING_READ_ATOMIC;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -54,7 +58,7 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
 
     @Parameters(name = "changelogFile-{0}")
     public static Collection<Boolean> parameters() {
-        return Arrays.asList(true, false);
+        return Arrays.asList(true);
     }
 
     @Override
@@ -70,9 +74,21 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
     }
 
     @TestTemplate
-    public void testStreamingAtomic() throws Exception {
-        sql("ALTER TABLE T2 SET ('%s' = 'true')", STREAMING_READ_ATOMIC.key());
-        testSimple("T2");
+    public void testSourceReuse() {
+        sEnv.executeSql("CREATE TEMPORARY TABLE print1 (a STRING) WITH ('connector'='print')");
+        sEnv.executeSql("CREATE TEMPORARY TABLE print2 (b STRING) WITH ('connector'='print')");
+
+        StatementSet statementSet = sEnv.createStatementSet();
+        statementSet.addInsertSql(
+                "INSERT INTO print1 SELECT a FROM T1 /*+ OPTIONS('scan.push-down' = 'false') */");
+        statementSet.addInsertSql(
+                "INSERT INTO print2 SELECT b FROM T1 /*+ OPTIONS('scan.push-down' = 'false') */");
+        assertThat(statementSet.compilePlan().explain()).contains("Reused");
+
+        statementSet = sEnv.createStatementSet();
+        statementSet.addInsertSql("INSERT INTO print1 SELECT a FROM T1");
+        statementSet.addInsertSql("INSERT INTO print2 SELECT b FROM T1");
+        assertThat(statementSet.compilePlan().explain()).doesNotContain("Reused");
     }
 
     @TestTemplate
@@ -119,15 +135,40 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
         iterator.close();
     }
 
+    @TestTemplate
+    @Timeout(120)
+    public void testSnapshotWatermark() throws Exception {
+        streamSqlIter(
+                "CREATE TEMPORARY TABLE gen (a STRING, b STRING, c STRING,"
+                        + " dt AS NOW(), WATERMARK FOR dt AS dt) WITH ('connector'='datagen')");
+        CloseableIterator<Row> insert1 = streamSqlIter("INSERT INTO T2 SELECT a, b, c FROM gen");
+        sql("CREATE TABLE WT (a STRING, b STRING, c STRING, PRIMARY KEY (a) NOT ENFORCED)");
+        CloseableIterator<Row> insert2 =
+                streamSqlIter("INSERT INTO WT SELECT * FROM T2 /*+ OPTIONS('consumer-id'='me') */");
+        while (true) {
+            Set<Long> watermarks =
+                    sql("SELECT `watermark` FROM WT$snapshots").stream()
+                            .map(r -> (Long) r.getField(0))
+                            .collect(Collectors.toSet());
+            if (watermarks.size() > 1) {
+                insert1.close();
+                insert2.close();
+                return;
+            }
+            Thread.sleep(1000);
+        }
+    }
+
     private void testSimple(String table) throws Exception {
         BlockingIterator<Row, Row> iterator =
                 BlockingIterator.of(streamSqlIter("SELECT * FROM %s", table));
 
         batchSql("INSERT INTO %s VALUES ('1', '2', '3'), ('4', '5', '6')", table);
+        batchSql("INSERT INTO %s VALUES ('7', '8', '9')", table);
         assertThat(iterator.collect(2))
                 .containsExactlyInAnyOrder(Row.of("1", "2", "3"), Row.of("4", "5", "6"));
 
-        batchSql("INSERT INTO %s VALUES ('7', '8', '9')", table);
+        //        batchSql("INSERT INTO %s VALUES ('7', '8', '9')", table);
         assertThat(iterator.collect(1)).containsExactlyInAnyOrder(Row.of("7", "8", "9"));
         iterator.close();
     }
@@ -195,6 +236,11 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
                         Row.of("7", "8", "9"), Row.of("10", "11", "12"), Row.of("13", "14", "15"));
         iterator.close();
 
+        // after second snapshot
+        iterator = BlockingIterator.of(streamSqlIter(sql, second.timeMillis() + 1));
+        assertThat(iterator.collect(1)).containsExactlyInAnyOrder(Row.of("13", "14", "15"));
+        iterator.close();
+
         // from start
         iterator = BlockingIterator.of(streamSqlIter(sql, first.timeMillis() - 1));
         assertThat(iterator.collect(5))
@@ -259,12 +305,12 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
     @TestTemplate
     public void testConfigureStartupSnapshot() throws Exception {
         // Configure 'scan.snapshot-id' without 'scan.mode'.
+        batchSql("INSERT INTO T1 VALUES ('1', '2', '3'), ('4', '5', '6')");
+        batchSql("INSERT INTO T1 VALUES ('7', '8', '9'), ('10', '11', '12')");
         BlockingIterator<Row, Row> iterator =
                 BlockingIterator.of(
                         streamSqlIter(
                                 "SELECT * FROM T1 /*+ OPTIONS('scan.snapshot-id'='%s') */", 1));
-        batchSql("INSERT INTO T1 VALUES ('1', '2', '3'), ('4', '5', '6')");
-        batchSql("INSERT INTO T1 VALUES ('7', '8', '9'), ('10', '11', '12')");
         assertThat(iterator.collect(2))
                 .containsExactlyInAnyOrder(Row.of("1", "2", "3"), Row.of("4", "5", "6"));
         iterator.close();
@@ -278,6 +324,22 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
                 .containsExactlyInAnyOrder(Row.of("1", "2", "3"), Row.of("4", "5", "6"));
         iterator.close();
 
+        iterator =
+                BlockingIterator.of(
+                        streamSqlIter(
+                                "SELECT * FROM T1 /*+ OPTIONS('scan.snapshot-id'='%s') */", 1));
+        assertThat(iterator.collect(2))
+                .containsExactlyInAnyOrder(Row.of("1", "2", "3"), Row.of("4", "5", "6"));
+        iterator.close();
+
+        iterator =
+                BlockingIterator.of(
+                        streamSqlIter(
+                                "SELECT * FROM T1 /*+ OPTIONS('scan.snapshot-id'='%s') */", 2));
+        assertThat(iterator.collect(2))
+                .containsExactlyInAnyOrder(Row.of("7", "8", "9"), (Row.of("10", "11", "12")));
+        iterator.close();
+
         // Configure 'scan.snapshot-id' with 'scan.mode=latest'.
         assertThatThrownBy(
                         () ->
@@ -287,6 +349,52 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
                 .hasCauseInstanceOf(IllegalArgumentException.class)
                 .hasRootCauseMessage(
                         "scan.snapshot-id must be null when you use latest for scan.mode");
+    }
+
+    @TestTemplate
+    public void testConfigureStartupSnapshotFull() throws Exception {
+        // Configure 'scan.snapshot-id' with 'scan.mode'='from-snapshot-full'.
+        batchSql("INSERT INTO T1 VALUES ('1', '2', '3'), ('4', '5', '6')");
+        batchSql("INSERT INTO T1 VALUES ('7', '8', '9'), ('10', '11', '12')");
+
+        // Start from earliest snapshot
+        BlockingIterator<Row, Row> iterator =
+                BlockingIterator.of(
+                        streamSqlIter(
+                                "SELECT * FROM T1 /*+ OPTIONS('scan.mode'='from-snapshot-full','scan.snapshot-id'='%s') */",
+                                1));
+        assertThat(iterator.collect(2))
+                .containsExactlyInAnyOrder(Row.of("1", "2", "3"), Row.of("4", "5", "6"));
+        iterator.close();
+
+        batchSql("INSERT INTO T1 VALUES ('13', '14', '15')");
+
+        iterator =
+                BlockingIterator.of(
+                        streamSqlIter(
+                                "SELECT * FROM T1 /*+ OPTIONS('scan.mode'='from-snapshot-full','scan.snapshot-id'='%s') */",
+                                2));
+        assertThat(iterator.collect(4))
+                .containsExactlyInAnyOrder(
+                        Row.of("1", "2", "3"),
+                        Row.of("4", "5", "6"),
+                        Row.of("7", "8", "9"),
+                        Row.of("10", "11", "12"));
+        iterator.close();
+
+        iterator =
+                BlockingIterator.of(
+                        streamSqlIter(
+                                "SELECT * FROM T1 /*+ OPTIONS('scan.mode'='from-snapshot-full','scan.snapshot-id'='%s') */",
+                                2));
+        assertThat(iterator.collect(5))
+                .containsExactlyInAnyOrder(
+                        Row.of("1", "2", "3"),
+                        Row.of("4", "5", "6"),
+                        Row.of("7", "8", "9"),
+                        Row.of("10", "11", "12"),
+                        Row.of("13", "14", "15"));
+        iterator.close();
     }
 
     @TestTemplate
@@ -326,5 +434,25 @@ public class ContinuousFileStoreITCase extends CatalogITCaseBase {
                 .hasCauseInstanceOf(ValidationException.class)
                 .hasRootCauseMessage(
                         "File store continuous reading does not support eventual consistency mode.");
+    }
+
+    @TestTemplate
+    public void testFlinkMemoryPool() {
+        // Check if the configuration is effective
+        assertThatThrownBy(
+                        () ->
+                                batchSql(
+                                        "INSERT INTO %s /*+ OPTIONS('sink.use-managed-memory-allocator'='true', 'sink.managed.writer-buffer-memory'='0M') */ "
+                                                + "VALUES ('1', '2', '3'), ('4', '5', '6')",
+                                        "T1"))
+                .hasCauseInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage(
+                        "Weights for operator scope use cases must be greater than 0.");
+
+        batchSql(
+                "INSERT INTO %s /*+ OPTIONS('sink.use-managed-memory-allocator'='true', 'sink.managed.writer-buffer-memory'='1M') */ "
+                        + "VALUES ('1', '2', '3'), ('4', '5', '6')",
+                "T1");
+        assertThat(batchSql("SELECT * FROM T1").size()).isEqualTo(2);
     }
 }

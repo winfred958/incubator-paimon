@@ -19,16 +19,19 @@
 package org.apache.paimon.table.sink;
 
 import org.apache.paimon.FileStore;
+import org.apache.paimon.annotation.VisibleForTesting;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.disk.IOManager;
 import org.apache.paimon.io.DataFileMeta;
+import org.apache.paimon.memory.MemoryPoolFactory;
 import org.apache.paimon.memory.MemorySegmentPool;
 import org.apache.paimon.operation.AbstractFileStoreWrite;
 import org.apache.paimon.operation.FileStoreWrite;
 import org.apache.paimon.utils.Restorable;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 import static org.apache.paimon.utils.Preconditions.checkState;
 
@@ -38,7 +41,7 @@ import static org.apache.paimon.utils.Preconditions.checkState;
  * @param <T> type of record to write into {@link FileStore}.
  */
 public class TableWriteImpl<T>
-        implements InnerTableWrite, Restorable<List<AbstractFileStoreWrite.State>> {
+        implements InnerTableWrite, Restorable<List<AbstractFileStoreWrite.State<T>>> {
 
     private final AbstractFileStoreWrite<T> write;
     private final KeyAndBucketExtractor<InternalRow> keyAndBucketExtractor;
@@ -56,8 +59,14 @@ public class TableWriteImpl<T>
     }
 
     @Override
-    public TableWriteImpl<T> withOverwrite(boolean overwrite) {
-        write.withOverwrite(overwrite);
+    public TableWriteImpl<T> withIgnorePreviousFiles(boolean ignorePreviousFiles) {
+        write.withIgnorePreviousFiles(ignorePreviousFiles);
+        return this;
+    }
+
+    @Override
+    public TableWriteImpl<T> isStreamingMode(boolean isStreamingMode) {
+        write.isStreamingMode(isStreamingMode);
         return this;
     }
 
@@ -70,6 +79,16 @@ public class TableWriteImpl<T>
     @Override
     public TableWriteImpl<T> withMemoryPool(MemorySegmentPool memoryPool) {
         write.withMemoryPool(memoryPool);
+        return this;
+    }
+
+    public TableWriteImpl<T> withMemoryPoolFactory(MemoryPoolFactory memoryPoolFactory) {
+        write.withMemoryPoolFactory(memoryPoolFactory);
+        return this;
+    }
+
+    public TableWriteImpl<T> withCompactExecutor(ExecutorService compactExecutor) {
+        write.withCompactExecutor(compactExecutor);
         return this;
     }
 
@@ -91,15 +110,26 @@ public class TableWriteImpl<T>
     }
 
     public SinkRecord writeAndReturn(InternalRow row) throws Exception {
-        keyAndBucketExtractor.setRecord(row);
-        SinkRecord record =
-                new SinkRecord(
-                        keyAndBucketExtractor.partition(),
-                        keyAndBucketExtractor.bucket(),
-                        keyAndBucketExtractor.trimmedPrimaryKey(),
-                        row);
+        SinkRecord record = toSinkRecord(row);
         write.write(record.partition(), record.bucket(), recordExtractor.extract(record));
         return record;
+    }
+
+    @VisibleForTesting
+    public T writeAndReturnData(InternalRow row) throws Exception {
+        SinkRecord record = toSinkRecord(row);
+        T data = recordExtractor.extract(record);
+        write.write(record.partition(), record.bucket(), data);
+        return data;
+    }
+
+    private SinkRecord toSinkRecord(InternalRow row) {
+        keyAndBucketExtractor.setRecord(row);
+        return new SinkRecord(
+                keyAndBucketExtractor.partition(),
+                keyAndBucketExtractor.bucket(),
+                keyAndBucketExtractor.trimmedPrimaryKey(),
+                row);
     }
 
     public SinkRecord toLogRecord(SinkRecord record) {
@@ -146,13 +176,18 @@ public class TableWriteImpl<T>
     }
 
     @Override
-    public List<AbstractFileStoreWrite.State> checkpoint() {
+    public List<AbstractFileStoreWrite.State<T>> checkpoint() {
         return write.checkpoint();
     }
 
     @Override
-    public void restore(List<AbstractFileStoreWrite.State> state) {
+    public void restore(List<AbstractFileStoreWrite.State<T>> state) {
         write.restore(state);
+    }
+
+    @VisibleForTesting
+    public AbstractFileStoreWrite<T> getWrite() {
+        return write;
     }
 
     /** Extractor to extract {@link T} from the {@link SinkRecord}. */

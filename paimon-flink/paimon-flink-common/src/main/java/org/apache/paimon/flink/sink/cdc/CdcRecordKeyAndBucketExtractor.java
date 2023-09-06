@@ -30,6 +30,8 @@ import org.apache.paimon.types.RowType;
 import java.util.List;
 import java.util.stream.IntStream;
 
+import static org.apache.paimon.flink.sink.cdc.CdcRecordUtils.projectAsInsert;
+
 /** {@link KeyAndBucketExtractor} for {@link CdcRecord}. */
 public class CdcRecordKeyAndBucketExtractor implements KeyAndBucketExtractor<CdcRecord> {
 
@@ -39,10 +41,13 @@ public class CdcRecordKeyAndBucketExtractor implements KeyAndBucketExtractor<Cdc
     private final Projection partitionProjection;
     private final List<DataField> bucketKeyFields;
     private final Projection bucketKeyProjection;
+    private final List<DataField> trimmedPKFields;
+    private final Projection trimmedPKProjection;
 
     private CdcRecord record;
 
     private BinaryRow partition;
+    private BinaryRow trimmedPK;
     private BinaryRow bucketKey;
     private Integer bucket;
 
@@ -60,6 +65,12 @@ public class CdcRecordKeyAndBucketExtractor implements KeyAndBucketExtractor<Cdc
         this.bucketKeyProjection =
                 CodeGenUtils.newProjection(
                         bucketKeyType, IntStream.range(0, bucketKeyType.getFieldCount()).toArray());
+
+        this.trimmedPKFields = schema.trimmedPrimaryKeysFields();
+        this.trimmedPKProjection =
+                CodeGenUtils.newProjection(
+                        new RowType(trimmedPKFields),
+                        IntStream.range(0, trimmedPKFields.size()).toArray());
     }
 
     @Override
@@ -68,13 +79,14 @@ public class CdcRecordKeyAndBucketExtractor implements KeyAndBucketExtractor<Cdc
 
         this.partition = null;
         this.bucketKey = null;
+        this.trimmedPK = null;
         this.bucket = null;
     }
 
     @Override
     public BinaryRow partition() {
         if (partition == null) {
-            partition = partitionProjection.apply(record.projectAsInsert(partitionFields));
+            partition = partitionProjection.apply(projectAsInsert(record, partitionFields));
         }
         return partition;
     }
@@ -82,7 +94,7 @@ public class CdcRecordKeyAndBucketExtractor implements KeyAndBucketExtractor<Cdc
     @Override
     public int bucket() {
         if (bucketKey == null) {
-            bucketKey = bucketKeyProjection.apply(record.projectAsInsert(bucketKeyFields));
+            bucketKey = bucketKeyProjection.apply(projectAsInsert(record, bucketKeyFields));
         }
         if (bucket == null) {
             bucket =
@@ -94,7 +106,10 @@ public class CdcRecordKeyAndBucketExtractor implements KeyAndBucketExtractor<Cdc
 
     @Override
     public BinaryRow trimmedPrimaryKey() {
-        throw new UnsupportedOperationException();
+        if (trimmedPK == null) {
+            trimmedPK = trimmedPKProjection.apply(projectAsInsert(record, trimmedPKFields));
+        }
+        return trimmedPK;
     }
 
     @Override

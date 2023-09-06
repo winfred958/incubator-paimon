@@ -19,7 +19,7 @@
 package org.apache.paimon.table.source.snapshot;
 
 import org.apache.paimon.CoreOptions;
-import org.apache.paimon.operation.ScanKind;
+import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.utils.SnapshotManager;
 
 import org.slf4j.Logger;
@@ -31,17 +31,13 @@ public class FullStartingScanner implements StartingScanner {
     private static final Logger LOG = LoggerFactory.getLogger(FullStartingScanner.class);
 
     @Override
-    public Result scan(SnapshotManager snapshotManager, SnapshotSplitReader snapshotSplitReader) {
+    public Result scan(SnapshotManager snapshotManager, SnapshotReader snapshotReader) {
         Long startingSnapshotId = snapshotManager.latestSnapshotId();
         if (startingSnapshotId == null) {
             LOG.debug("There is currently no snapshot. Waiting for snapshot generation.");
             return new NoSnapshot();
         }
-        return new ScannedResult(
-                startingSnapshotId,
-                snapshotSplitReader
-                        .withKind(ScanKind.ALL)
-                        .withSnapshot(startingSnapshotId)
-                        .splits());
+        return StartingScanner.fromPlan(
+                snapshotReader.withMode(ScanMode.ALL).withSnapshot(startingSnapshotId).read());
     }
 }

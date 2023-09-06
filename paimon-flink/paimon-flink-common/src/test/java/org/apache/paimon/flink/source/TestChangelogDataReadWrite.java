@@ -20,6 +20,7 @@ package org.apache.paimon.flink.source;
 
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.KeyValue;
+import org.apache.paimon.codegen.RecordEqualiser;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.GenericRow;
 import org.apache.paimon.data.InternalRow;
@@ -56,7 +57,9 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -71,6 +74,8 @@ public class TestChangelogDataReadWrite {
             new RowType(singletonList(new DataField(0, "v", new BigIntType())));
     private static final Comparator<InternalRow> COMPARATOR =
             Comparator.comparingLong(o -> o.getLong(0));
+    private static final RecordEqualiser EQUALISER =
+            (RecordEqualiser) (row1, row2) -> row1.getLong(0) == row2.getLong(0);
     private static final KeyValueFieldsExtractor EXTRACTOR =
             new KeyValueFieldsExtractor() {
                 @Override
@@ -168,6 +173,9 @@ public class TestChangelogDataReadWrite {
     public RecordWriter<KeyValue> createMergeTreeWriter(BinaryRow partition, int bucket) {
         CoreOptions options =
                 new CoreOptions(Collections.singletonMap(CoreOptions.FILE_FORMAT.key(), "avro"));
+
+        Map<String, FileStorePathFactory> pathFactoryMap = new HashMap<>();
+        pathFactoryMap.put("avro", pathFactory);
         RecordWriter<KeyValue> writer =
                 new KeyValueFileStoreWrite(
                                 LocalFileIO.create(),
@@ -177,11 +185,13 @@ public class TestChangelogDataReadWrite {
                                 KEY_TYPE,
                                 VALUE_TYPE,
                                 () -> COMPARATOR,
-                                () -> COMPARATOR,
+                                () -> EQUALISER,
                                 DeduplicateMergeFunction.factory(),
                                 pathFactory,
+                                pathFactoryMap,
                                 snapshotManager,
                                 null, // not used, we only create an empty writer
+                                null,
                                 options,
                                 EXTRACTOR)
                         .createWriterContainer(partition, bucket, true)

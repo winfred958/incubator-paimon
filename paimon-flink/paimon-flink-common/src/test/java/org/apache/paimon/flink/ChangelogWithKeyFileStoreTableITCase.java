@@ -18,9 +18,11 @@
 
 package org.apache.paimon.flink;
 
-import org.apache.paimon.flink.action.FlinkActions;
+import org.apache.paimon.CoreOptions;
+import org.apache.paimon.flink.action.CompactAction;
 import org.apache.paimon.flink.util.AbstractTestBase;
 import org.apache.paimon.fs.Path;
+import org.apache.paimon.fs.local.LocalFileIO;
 import org.apache.paimon.utils.FailingFileIO;
 
 import org.apache.flink.api.common.JobStatus;
@@ -49,12 +51,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 import static org.apache.flink.streaming.api.environment.ExecutionCheckpointingOptions.CHECKPOINTING_INTERVAL;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Tests for changelog table with primary keys. */
 public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
@@ -63,10 +63,17 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
     //  Test Utilities
     // ------------------------------------------------------------------------
     private String path;
+    private Map<String, String> tableDefaultProperties;
 
     @BeforeEach
     public void before() throws IOException {
         path = getTempDirPath();
+
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        tableDefaultProperties = new HashMap<>();
+        if (random.nextBoolean()) {
+            tableDefaultProperties.put(CoreOptions.LOCAL_MERGE_BUFFER_SIZE.key(), "256 kb");
+        }
     }
 
     private TableEnvironment createBatchTableEnvironment() {
@@ -91,6 +98,25 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         return env;
     }
 
+    private String createCatalogSql(String catalogName, String warehouse) {
+        String defaultPropertyString = "";
+        if (tableDefaultProperties.size() > 0) {
+            defaultPropertyString = ", ";
+            defaultPropertyString +=
+                    tableDefaultProperties.entrySet().stream()
+                            .map(
+                                    e ->
+                                            String.format(
+                                                    "'table-default.%s' = '%s'",
+                                                    e.getKey(), e.getValue()))
+                            .collect(Collectors.joining(", "));
+        }
+
+        return String.format(
+                "CREATE CATALOG `%s` WITH ( 'type' = 'paimon', 'warehouse' = '%s' %s )",
+                catalogName, warehouse, defaultPropertyString);
+    }
+
     // ------------------------------------------------------------------------
     //  Constructed Tests
     // ------------------------------------------------------------------------
@@ -112,10 +138,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         bEnv.getConfig()
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
-        bEnv.executeSql(
-                String.format(
-                        "CREATE CATALOG testCatalog WITH ('type'='paimon', 'warehouse'='%s')",
-                        path));
+        bEnv.executeSql(createCatalogSql("testCatalog", path));
         bEnv.executeSql("USE CATALOG testCatalog");
         bEnv.executeSql(
                 "CREATE TABLE T ("
@@ -133,10 +156,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         sEnv.getConfig()
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
-        sEnv.executeSql(
-                String.format(
-                        "CREATE CATALOG testCatalog WITH ('type'='paimon', 'warehouse'='%s')",
-                        path));
+        sEnv.executeSql(createCatalogSql("testCatalog", path));
         sEnv.executeSql("USE CATALOG testCatalog");
         CloseableIterator<Row> it = sEnv.executeSql("SELECT * FROM T").collect();
 
@@ -144,7 +164,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         StreamExecutionEnvironment env = createStreamExecutionEnvironment(2000);
         env.setParallelism(1);
         env.setRestartStrategy(RestartStrategies.noRestart());
-        FlinkActions.compact(path, "default", "T").build(env);
+        new CompactAction(path, "default", "T").build(env);
         JobClient client = env.executeAsync();
 
         // write records for a while
@@ -158,11 +178,11 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
                     .await();
         }
 
-        assertEquals(JobStatus.RUNNING, client.getJobStatus().get());
+        assertThat(client.getJobStatus().get()).isEqualTo(JobStatus.RUNNING);
 
         for (int i = 1; i <= currentKey; i++) {
-            assertTrue(it.hasNext());
-            assertEquals(String.format("+I[%d, %d]", i, i * 100), it.next().toString());
+            assertThat(it.hasNext()).isTrue();
+            assertThat(it.next().toString()).isEqualTo(String.format("+I[%d, %d]", i, i * 100));
         }
         it.close();
     }
@@ -180,10 +200,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
 
-        sEnv.executeSql(
-                String.format(
-                        "CREATE CATALOG testCatalog WITH ('type'='paimon', 'warehouse'='%s/warehouse')",
-                        path));
+        sEnv.executeSql(createCatalogSql("testCatalog", path + "/warehouse"));
         sEnv.executeSql("USE CATALOG testCatalog");
         sEnv.executeSql(
                 "CREATE TABLE T ( k INT, v STRING, PRIMARY KEY (k) NOT ENFORCED ) "
@@ -193,6 +210,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
                         + ")");
 
         Path inputPath = new Path(path, "input");
+        LocalFileIO.create().mkdirs(inputPath);
         sEnv.executeSql(
                 "CREATE TABLE `default_catalog`.`default_database`.`S` ( i INT, g STRING ) "
                         + "WITH ( 'connector' = 'filesystem', 'format' = 'testcsv', 'path' = '"
@@ -240,6 +258,8 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
                         "-U[4, D]",
                         "+U[4, C]",
                         "+I[5, D]");
+
+        it.close();
     }
 
     // ------------------------------------------------------------------------
@@ -388,7 +408,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
             StreamExecutionEnvironment env =
                     createStreamExecutionEnvironment(random.nextInt(1900) + 100);
             env.setParallelism(2);
-            FlinkActions.compact(path, "default", "T").build(env);
+            new CompactAction(path, "default", "T").build(env);
             env.executeAsync();
         }
 
@@ -422,7 +442,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
             StreamExecutionEnvironment env =
                     createStreamExecutionEnvironment(random.nextInt(1900) + 100);
             env.setParallelism(2);
-            FlinkActions.compact(path, "default", "T").build(env);
+            new CompactAction(path, "default", "T").build(env);
             env.executeAsync();
         }
 
@@ -438,10 +458,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         sEnv.getConfig()
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
-        sEnv.executeSql(
-                String.format(
-                        "CREATE CATALOG testCatalog WITH ('type'='paimon', 'warehouse'='%s')",
-                        path));
+        sEnv.executeSql(createCatalogSql("testCatalog", path));
         sEnv.executeSql("USE CATALOG testCatalog");
 
         ResultChecker checker = new ResultChecker();
@@ -474,17 +491,12 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
     private List<TableResult> testRandom(
             TableEnvironment tEnv, int numProducers, boolean enableFailure, String tableProperties)
             throws Exception {
-        assert LIMIT > NUM_VALUES;
-
         String failingName = UUID.randomUUID().toString();
         String failingPath = FailingFileIO.getFailingPath(failingName, path);
 
         // no failure when creating catalog and table
         FailingFileIO.reset(failingName, 0, 1);
-        tEnv.executeSql(
-                String.format(
-                        "CREATE CATALOG testCatalog WITH ('type'='paimon', 'warehouse'='%s')",
-                        failingPath));
+        tEnv.executeSql(createCatalogSql("testCatalog", failingPath));
         tEnv.executeSql("USE CATALOG testCatalog");
         tEnv.executeSql(
                 "CREATE TABLE T("
@@ -523,7 +535,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         List<TableResult> results = new ArrayList<>();
 
         if (enableFailure) {
-            FailingFileIO.reset(failingName, 100, 10000);
+            FailingFileIO.reset(failingName, 2, 10000);
         }
         for (int i = 0; i < numProducers; i++) {
             // for the last `NUM_PARTS * NUM_KEYS` records, we update every key to a specific value
@@ -561,10 +573,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
 
     private void checkBatchResult(int numProducers) throws Exception {
         TableEnvironment bEnv = createBatchTableEnvironment();
-        bEnv.executeSql(
-                String.format(
-                        "CREATE CATALOG testCatalog WITH ('type'='paimon', 'warehouse'='%s')",
-                        path));
+        bEnv.executeSql(createCatalogSql("testCatalog", path));
         bEnv.executeSql("USE CATALOG testCatalog");
 
         ResultChecker checker = new ResultChecker();
@@ -591,21 +600,23 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
             String value = row.getField(2) + "|" + row.getField(3);
             switch (row.getKind()) {
                 case INSERT:
-                    assertFalse(valueMap.containsKey(key));
-                    assertTrue(!kindMap.containsKey(key) || kindMap.get(key) == RowKind.DELETE);
+                    assertThat(valueMap.containsKey(key)).isFalse();
+                    assertThat(!kindMap.containsKey(key) || kindMap.get(key) == RowKind.DELETE)
+                            .isTrue();
                     valueMap.put(key, value);
                     break;
                 case UPDATE_AFTER:
-                    assertFalse(valueMap.containsKey(key));
-                    assertEquals(RowKind.UPDATE_BEFORE, kindMap.get(key));
+                    assertThat(valueMap.containsKey(key)).isFalse();
+                    assertThat(kindMap.get(key)).isEqualTo(RowKind.UPDATE_BEFORE);
                     valueMap.put(key, value);
                     break;
                 case UPDATE_BEFORE:
                 case DELETE:
-                    assertEquals(value, valueMap.get(key));
-                    assertTrue(
-                            kindMap.get(key) == RowKind.INSERT
-                                    || kindMap.get(key) == RowKind.UPDATE_AFTER);
+                    assertThat(valueMap.get(key)).isEqualTo(value);
+                    assertThat(
+                                    kindMap.get(key) == RowKind.INSERT
+                                            || kindMap.get(key) == RowKind.UPDATE_AFTER)
+                            .isTrue();
                     valueMap.remove(key);
                     break;
                 default:
@@ -615,13 +626,13 @@ public class ChangelogWithKeyFileStoreTableITCase extends AbstractTestBase {
         }
 
         private void assertResult(int numProducers) {
-            assertEquals(NUM_PARTS * NUM_KEYS * numProducers, valueMap.size());
+            assertThat(valueMap.size()).isEqualTo(NUM_PARTS * NUM_KEYS * numProducers);
             for (int i = 0; i < NUM_PARTS; i++) {
                 for (int j = 0; j < NUM_KEYS * numProducers; j++) {
                     String key = i + "|" + j;
                     int x = LIMIT + i * NUM_KEYS + j % NUM_KEYS;
                     String expectedValue = x + "|" + x + ".str";
-                    assertEquals(expectedValue, valueMap.get(key));
+                    assertThat(valueMap.get(key)).isEqualTo(expectedValue);
                 }
             }
         }

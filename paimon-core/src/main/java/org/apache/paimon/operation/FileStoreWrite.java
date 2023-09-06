@@ -22,6 +22,7 @@ import org.apache.paimon.FileStore;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.disk.IOManager;
 import org.apache.paimon.io.DataFileMeta;
+import org.apache.paimon.memory.MemoryPoolFactory;
 import org.apache.paimon.memory.MemorySegmentPool;
 import org.apache.paimon.table.sink.CommitMessage;
 import org.apache.paimon.table.sink.SinkRecord;
@@ -44,14 +45,23 @@ public interface FileStoreWrite<T> {
      *
      * @param memoryPool the given memory pool.
      */
-    FileStoreWrite<T> withMemoryPool(MemorySegmentPool memoryPool);
+    default FileStoreWrite<T> withMemoryPool(MemorySegmentPool memoryPool) {
+        return withMemoryPoolFactory(new MemoryPoolFactory(memoryPool));
+    }
 
     /**
-     * If overwrite is true, the writer will overwrite the store, otherwise it won't.
+     * With memory pool factory for the current file store write.
      *
-     * @param overwrite the overwrite flag
+     * @param memoryPoolFactory the given memory pool factory.
      */
-    void withOverwrite(boolean overwrite);
+    FileStoreWrite<T> withMemoryPoolFactory(MemoryPoolFactory memoryPoolFactory);
+
+    /**
+     * Set whether the write operation should ignore previously stored files.
+     *
+     * @param ignorePreviousFiles whether the write operation should ignore previously stored files.
+     */
+    void withIgnorePreviousFiles(boolean ignorePreviousFiles);
 
     /**
      * Write the data to the store according to the partition and bucket.
@@ -97,6 +107,13 @@ public interface FileStoreWrite<T> {
      */
     List<CommitMessage> prepareCommit(boolean waitCompaction, long commitIdentifier)
             throws Exception;
+
+    /**
+     * We detect whether it is in batch mode, if so, we do some optimization.
+     *
+     * @param isStreamingMode whether in streaming mode
+     */
+    void isStreamingMode(boolean isStreamingMode);
 
     /**
      * Close the writer.

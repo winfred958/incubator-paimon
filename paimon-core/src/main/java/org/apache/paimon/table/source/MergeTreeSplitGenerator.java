@@ -22,9 +22,10 @@ import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.mergetree.SortedRun;
 import org.apache.paimon.mergetree.compact.IntervalPartition;
-import org.apache.paimon.utils.OrderedPacking;
+import org.apache.paimon.utils.BinPacking;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
@@ -47,7 +48,7 @@ public class MergeTreeSplitGenerator implements SplitGenerator {
     }
 
     @Override
-    public List<List<DataFileMeta>> split(List<DataFileMeta> files) {
+    public List<List<DataFileMeta>> splitForBatch(List<DataFileMeta> files) {
         /*
          * The generator aims to parallel the scan execution by slicing the files of each bucket
          * into multiple splits. The generation has one constraint: files with intersected key
@@ -76,10 +77,16 @@ public class MergeTreeSplitGenerator implements SplitGenerator {
         return packSplits(sections);
     }
 
+    @Override
+    public List<List<DataFileMeta>> splitForStreaming(List<DataFileMeta> files) {
+        // We don't split streaming scan files
+        return Collections.singletonList(files);
+    }
+
     private List<List<DataFileMeta>> packSplits(List<List<DataFileMeta>> sections) {
         Function<List<DataFileMeta>, Long> weightFunc =
                 file -> Math.max(totalSize(file), openFileCost);
-        return OrderedPacking.pack(sections, weightFunc, targetSplitSize).stream()
+        return BinPacking.packForOrdered(sections, weightFunc, targetSplitSize).stream()
                 .map(this::flatFiles)
                 .collect(Collectors.toList());
     }

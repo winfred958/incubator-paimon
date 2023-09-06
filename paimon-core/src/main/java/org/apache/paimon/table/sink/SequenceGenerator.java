@@ -18,17 +18,22 @@
 
 package org.apache.paimon.table.sink;
 
+import org.apache.paimon.CoreOptions;
+import org.apache.paimon.CoreOptions.SequenceAutoPadding;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.types.BigIntType;
 import org.apache.paimon.types.CharType;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypeDefaultVisitor;
+import org.apache.paimon.types.DataTypeFamily;
 import org.apache.paimon.types.DateType;
 import org.apache.paimon.types.DecimalType;
 import org.apache.paimon.types.DoubleType;
 import org.apache.paimon.types.FloatType;
 import org.apache.paimon.types.IntType;
 import org.apache.paimon.types.LocalZonedTimestampType;
+import org.apache.paimon.types.RowKind;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.types.SmallIntType;
 import org.apache.paimon.types.TimestampType;
@@ -36,29 +41,134 @@ import org.apache.paimon.types.TinyIntType;
 import org.apache.paimon.types.VarCharType;
 import org.apache.paimon.utils.InternalRowUtils;
 
+import javax.annotation.Nullable;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
 /** Generate sequence number. */
 public class SequenceGenerator {
 
     private final int index;
+    private final List<SequenceAutoPadding> paddings;
 
     private final Generator generator;
+    private final DataType fieldType;
 
     public SequenceGenerator(String field, RowType rowType) {
+        this(field, rowType, Collections.emptyList());
+    }
+
+    public SequenceGenerator(String field, RowType rowType, List<SequenceAutoPadding> paddings) {
         index = rowType.getFieldNames().indexOf(field);
+        this.paddings = paddings;
+
         if (index == -1) {
             throw new RuntimeException(
                     String.format(
                             "Can not find sequence field %s in table schema: %s", field, rowType));
         }
-        generator = rowType.getTypeAt(index).accept(new SequenceGeneratorVisitor());
+        fieldType = rowType.getTypeAt(index);
+        generator = fieldType.accept(new SequenceGeneratorVisitor());
+    }
+
+    public SequenceGenerator(int index, DataType dataType) {
+        this.index = index;
+        this.paddings = Collections.emptyList();
+
+        this.fieldType = dataType;
+        if (index == -1) {
+            throw new RuntimeException(String.format("Index : %s is invalid", index));
+        }
+        generator = fieldType.accept(new SequenceGeneratorVisitor());
+    }
+
+    public static SequenceGenerator create(TableSchema schema, CoreOptions options) {
+        List<SequenceAutoPadding> sequenceAutoPadding =
+                options.sequenceAutoPadding().stream()
+                        .map(SequenceAutoPadding::fromString)
+                        .collect(Collectors.toList());
+        return options.sequenceField()
+                .map(
+                        field ->
+                                new SequenceGenerator(
+                                        field, schema.logicalRowType(), sequenceAutoPadding))
+                .orElse(null);
+    }
+
+    public int index() {
+        return index;
+    }
+
+    public DataType fieldType() {
+        return fieldType;
+    }
+
+    @Nullable
+    public Long generateNullable(InternalRow row) {
+        return generator.generateNullable(row, index);
     }
 
     public long generate(InternalRow row) {
-        return generator.generate(row, index);
+        long sequence = generator.generate(row, index);
+        for (SequenceAutoPadding padding : paddings) {
+            switch (padding) {
+                case ROW_KIND_FLAG:
+                    sequence = addRowKindFlag(sequence, row.getRowKind());
+                    break;
+                case SECOND_TO_MICRO:
+                    sequence = secondToMicro(sequence);
+                    break;
+                case MILLIS_TO_MICRO:
+                    sequence = millisToMicro(sequence);
+                    break;
+                default:
+                    throw new UnsupportedOperationException(
+                            "Unknown sequence padding mode " + padding);
+            }
+        }
+        return sequence;
+    }
+
+    private long addRowKindFlag(long sequence, RowKind rowKind) {
+        return (sequence << 1) | (rowKind.isAdd() ? 1 : 0);
+    }
+
+    private long millisToMicro(long sequence) {
+        // Generated value is millis
+        return sequence * 1_000 + getCurrentMicroOfMillis();
+    }
+
+    private long secondToMicro(long sequence) {
+        // timestamp returns millis
+        long second = fieldType.is(DataTypeFamily.TIMESTAMP) ? sequence / 1000 : sequence;
+        return second * 1_000_000 + getCurrentMicroOfSeconds();
+    }
+
+    private static long getCurrentMicroOfMillis() {
+        long currentNanoTime = System.nanoTime();
+        long mills = TimeUnit.MILLISECONDS.convert(currentNanoTime, TimeUnit.NANOSECONDS);
+        return (currentNanoTime - mills * 1_000_000) / 1000;
+    }
+
+    private static long getCurrentMicroOfSeconds() {
+        long currentNanoTime = System.nanoTime();
+        long seconds = TimeUnit.SECONDS.convert(currentNanoTime, TimeUnit.NANOSECONDS);
+        return (currentNanoTime - seconds * 1_000_000_000) / 1000;
     }
 
     private interface Generator {
         long generate(InternalRow row, int i);
+
+        @Nullable
+        default Long generateNullable(InternalRow row, int i) {
+            if (row.isNullAt(i)) {
+                return null;
+            }
+            return generate(row, i);
+        }
     }
 
     private static class SequenceGeneratorVisitor extends DataTypeDefaultVisitor<Generator> {

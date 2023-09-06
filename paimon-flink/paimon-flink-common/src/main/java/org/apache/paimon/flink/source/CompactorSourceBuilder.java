@@ -21,11 +21,11 @@ package org.apache.paimon.flink.source;
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.flink.FlinkConnectorOptions;
 import org.apache.paimon.flink.LogicalTypeConversion;
+import org.apache.paimon.options.Options;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.predicate.PredicateBuilder;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.source.ReadBuilder;
-import org.apache.paimon.table.source.Split;
 import org.apache.paimon.table.system.BucketsTable;
 import org.apache.paimon.types.RowType;
 
@@ -102,15 +102,12 @@ public class CompactorSourceBuilder {
         } else {
             bucketsTable = bucketsTable.copy(batchCompactOptions());
             ReadBuilder readBuilder = bucketsTable.newReadBuilder().withFilter(partitionPredicate);
-            List<Split> splits = readBuilder.newScan().plan().splits();
+            Options options = bucketsTable.coreOptions().toConfiguration();
             return new StaticFileStoreSource(
                     readBuilder,
                     null,
-                    bucketsTable
-                            .coreOptions()
-                            .toConfiguration()
-                            .get(FlinkConnectorOptions.SCAN_SPLIT_ENUMERATOR_BATCH_SIZE),
-                    splits);
+                    options.get(FlinkConnectorOptions.SCAN_SPLIT_ENUMERATOR_BATCH_SIZE),
+                    options.get(FlinkConnectorOptions.SCAN_SPLIT_ENUMERATOR_ASSIGN_MODE));
         }
     }
 
@@ -132,7 +129,9 @@ public class CompactorSourceBuilder {
         // set 'streaming-compact' and remove 'scan.bounded.watermark'
         return new HashMap<String, String>() {
             {
-                put(CoreOptions.STREAMING_COMPACT.key(), "true");
+                put(
+                        CoreOptions.STREAMING_COMPACT.key(),
+                        CoreOptions.StreamingCompactionType.NORMAL.getValue());
                 put(CoreOptions.SCAN_BOUNDED_WATERMARK.key(), null);
             }
         };

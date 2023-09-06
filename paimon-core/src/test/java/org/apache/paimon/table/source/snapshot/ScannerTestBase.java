@@ -26,12 +26,14 @@ import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.FileIOFinder;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.mergetree.compact.ConcatRecordReader;
+import org.apache.paimon.operation.Lock;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.reader.RecordReader;
 import org.apache.paimon.reader.RecordReaderIterator;
 import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.table.CatalogEnvironment;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.FileStoreTableFactory;
 import org.apache.paimon.table.source.DataSplit;
@@ -70,7 +72,7 @@ public abstract class ScannerTestBase {
     protected FileIO fileIO;
     protected String commitUser;
     protected FileStoreTable table;
-    protected SnapshotSplitReader snapshotSplitReader;
+    protected SnapshotReader snapshotReader;
 
     @BeforeEach
     public void before() throws Exception {
@@ -78,7 +80,7 @@ public abstract class ScannerTestBase {
         fileIO = FileIOFinder.find(tablePath);
         commitUser = UUID.randomUUID().toString();
         table = createFileStoreTable();
-        snapshotSplitReader = table.newSnapshotSplitReader();
+        snapshotReader = table.newSnapshotReader();
     }
 
     protected GenericRow rowData(Object... values) {
@@ -136,7 +138,12 @@ public abstract class ScannerTestBase {
                                 Arrays.asList("pt", "a"),
                                 conf.toMap(),
                                 ""));
-        return FileStoreTableFactory.create(fileIO, tablePath, tableSchema, conf);
+        return FileStoreTableFactory.create(
+                fileIO,
+                tablePath,
+                tableSchema,
+                conf,
+                new CatalogEnvironment(Lock.emptyFactory(), null, null));
     }
 
     protected List<Split> toSplits(List<DataSplit> dataSplits) {

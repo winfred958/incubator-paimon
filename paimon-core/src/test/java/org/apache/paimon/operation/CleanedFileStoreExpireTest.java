@@ -88,7 +88,7 @@ public class CleanedFileStoreExpireTest extends FileStoreExpireTestBase {
         ManifestEntry delete = new ManifestEntry(FileKind.DELETE, partition, 0, 1, dataFile);
 
         // expire
-        expire.expireMergeTreeFiles(Arrays.asList(add, delete));
+        expire.snapshotDeletion().doCleanUnusedDataFile(Arrays.asList(add, delete), f -> false);
 
         // check
         assertThat(fileIO.exists(myDataFile)).isFalse();

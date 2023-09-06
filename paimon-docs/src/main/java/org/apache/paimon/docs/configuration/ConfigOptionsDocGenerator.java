@@ -61,6 +61,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import static org.apache.paimon.docs.util.Utils.apacheHeaderToHtml;
 import static org.apache.paimon.docs.util.Utils.escapeCharacters;
 import static org.apache.paimon.options.description.TextElement.text;
 
@@ -72,13 +73,15 @@ public class ConfigOptionsDocGenerator {
     static final OptionsClassLocation[] LOCATIONS =
             new OptionsClassLocation[] {
                 new OptionsClassLocation("paimon-common", "org.apache.paimon.options"),
-                new OptionsClassLocation("paimon-core", "org.apache.paimon"),
+                new OptionsClassLocation("paimon-common", "org.apache.paimon"),
                 new OptionsClassLocation(
                         "paimon-flink/paimon-flink-common", "org.apache.paimon.flink"),
                 new OptionsClassLocation(
                         "paimon-flink/paimon-flink-common", "org.apache.paimon.flink.kafka"),
                 new OptionsClassLocation(
-                        "paimon-hive/paimon-hive-catalog", "org.apache.paimon.hive")
+                        "paimon-hive/paimon-hive-catalog", "org.apache.paimon.hive"),
+                new OptionsClassLocation(
+                        "paimon-spark/paimon-spark-common", "org.apache.paimon.spark")
             };
     static final String DEFAULT_PATH_PREFIX = "src/main/java";
 
@@ -185,7 +188,8 @@ public class ConfigOptionsDocGenerator {
                     try {
                         Files.write(
                                 Paths.get(outputDirectory, getSectionFileName(section)),
-                                sectionHtmlTable.getBytes(StandardCharsets.UTF_8));
+                                (apacheHeaderToHtml() + sectionHtmlTable)
+                                        .getBytes(StandardCharsets.UTF_8));
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
@@ -245,7 +249,8 @@ public class ConfigOptionsDocGenerator {
                         String outputFile = toSnakeCase(name) + "_configuration.html";
                         Files.write(
                                 Paths.get(outputDirectory, outputFile),
-                                group.getRight().getBytes(StandardCharsets.UTF_8));
+                                (apacheHeaderToHtml() + group.getRight())
+                                        .getBytes(StandardCharsets.UTF_8));
                     }
                 });
     }

@@ -23,7 +23,9 @@ import org.apache.paimon.data.serializer.InternalRowSerializer;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.FileIOFinder;
 import org.apache.paimon.fs.Path;
+import org.apache.paimon.index.IndexFileMeta;
 import org.apache.paimon.io.DataFileMeta;
+import org.apache.paimon.io.IndexIncrement;
 import org.apache.paimon.manifest.ManifestCommittable;
 import org.apache.paimon.manifest.ManifestEntry;
 import org.apache.paimon.manifest.ManifestFileMeta;
@@ -37,7 +39,6 @@ import org.apache.paimon.operation.FileStoreCommitImpl;
 import org.apache.paimon.operation.FileStoreExpireImpl;
 import org.apache.paimon.operation.FileStoreRead;
 import org.apache.paimon.operation.FileStoreScan;
-import org.apache.paimon.operation.ScanKind;
 import org.apache.paimon.options.MemorySize;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.reader.RecordReaderIterator;
@@ -45,11 +46,13 @@ import org.apache.paimon.schema.KeyValueFieldsExtractor;
 import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.table.sink.CommitMessageImpl;
 import org.apache.paimon.table.source.DataSplit;
+import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.CommitIncrement;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.RecordWriter;
 import org.apache.paimon.utils.SnapshotManager;
+import org.apache.paimon.utils.TagManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +61,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -101,6 +105,7 @@ public class TestFileStore extends KeyValueFileStore {
                 FileIOFinder.find(new Path(root)),
                 new SchemaManager(FileIOFinder.find(new Path(root)), options.path()),
                 0L,
+                false,
                 options,
                 partitionType,
                 keyType,
@@ -128,14 +133,12 @@ public class TestFileStore extends KeyValueFileStore {
     public FileStoreExpireImpl newExpire(
             int numRetainedMin, int numRetainedMax, long millisRetained) {
         return new FileStoreExpireImpl(
-                fileIO,
                 numRetainedMin,
                 numRetainedMax,
                 millisRetained,
-                pathFactory(),
                 snapshotManager(),
-                manifestFileFactory(),
-                manifestListFactory());
+                newSnapshotDeletion(),
+                new TagManager(fileIO, options.path()));
     }
 
     public List<Snapshot> commitData(
@@ -156,6 +159,7 @@ public class TestFileStore extends KeyValueFileStore {
                 false,
                 null,
                 watermark,
+                Collections.emptyList(),
                 (commit, committable) -> commit.commit(committable, Collections.emptyMap()));
     }
 
@@ -172,6 +176,7 @@ public class TestFileStore extends KeyValueFileStore {
                 false,
                 null,
                 null,
+                Collections.emptyList(),
                 (commit, committable) -> {
                     logOffsets.forEach(committable::addLogOffset);
                     commit.commit(committable, Collections.emptyMap());
@@ -191,6 +196,7 @@ public class TestFileStore extends KeyValueFileStore {
                 true,
                 null,
                 null,
+                Collections.emptyList(),
                 (commit, committable) ->
                         commit.overwrite(partition, committable, Collections.emptyMap()));
     }
@@ -212,13 +218,31 @@ public class TestFileStore extends KeyValueFileStore {
         return snapshotManager.snapshot(snapshotIdAfterCommit);
     }
 
+    public List<Snapshot> commitDataIndex(
+            KeyValue kv,
+            Function<KeyValue, BinaryRow> partitionCalculator,
+            int bucket,
+            IndexFileMeta... indexFiles)
+            throws Exception {
+        return commitDataImpl(
+                Collections.singletonList(kv),
+                partitionCalculator,
+                ignore -> bucket,
+                false,
+                null,
+                null,
+                Arrays.asList(indexFiles),
+                (commit, committable) -> commit.commit(committable, Collections.emptyMap()));
+    }
+
     public List<Snapshot> commitDataImpl(
             List<KeyValue> kvs,
             Function<KeyValue, BinaryRow> partitionCalculator,
             Function<KeyValue, Integer> bucketCalculator,
-            boolean emptyWriter,
+            boolean ignorePreviousFiles,
             Long identifier,
             Long watermark,
+            List<IndexFileMeta> indexFiles,
             BiConsumer<FileStoreCommit, ManifestCommittable> commitFunction)
             throws Exception {
         AbstractFileStoreWrite<KeyValue> write = newWrite();
@@ -233,7 +257,7 @@ public class TestFileStore extends KeyValueFileStore {
                                 if (w == null) {
                                     RecordWriter<KeyValue> writer =
                                             write.createWriterContainer(
-                                                            partition, bucket, emptyWriter)
+                                                            partition, bucket, ignorePreviousFiles)
                                                     .writer;
                                     ((MemoryOwner) writer)
                                             .setMemoryPool(
@@ -256,13 +280,15 @@ public class TestFileStore extends KeyValueFileStore {
                 writers.entrySet()) {
             for (Map.Entry<Integer, RecordWriter<KeyValue>> entryWithBucket :
                     entryWithPartition.getValue().entrySet()) {
-                CommitIncrement increment = entryWithBucket.getValue().prepareCommit(emptyWriter);
+                CommitIncrement increment =
+                        entryWithBucket.getValue().prepareCommit(ignorePreviousFiles);
                 committable.addFileCommittable(
                         new CommitMessageImpl(
                                 entryWithPartition.getKey(),
                                 entryWithBucket.getKey(),
                                 increment.newFilesIncrement(),
-                                increment.compactIncrement()));
+                                increment.compactIncrement(),
+                                new IndexIncrement(indexFiles)));
             }
         }
 
@@ -313,8 +339,8 @@ public class TestFileStore extends KeyValueFileStore {
                             .withKind(
                                     options.changelogProducer()
                                                     == CoreOptions.ChangelogProducer.NONE
-                                            ? ScanKind.DELTA
-                                            : ScanKind.CHANGELOG)
+                                            ? ScanMode.DELTA
+                                            : ScanMode.CHANGELOG)
                             .withSnapshot(snapshotId)
                             .plan()
                             .files();
@@ -324,7 +350,7 @@ public class TestFileStore extends KeyValueFileStore {
     }
 
     public List<KeyValue> readKvsFromManifestEntries(
-            List<ManifestEntry> entries, boolean isIncremental) throws Exception {
+            List<ManifestEntry> entries, boolean isStreaming) throws Exception {
         if (LOG.isDebugEnabled()) {
             for (ManifestEntry entry : entries) {
                 LOG.debug("reading from " + entry.toString());
@@ -349,12 +375,12 @@ public class TestFileStore extends KeyValueFileStore {
                 RecordReaderIterator<KeyValue> iterator =
                         new RecordReaderIterator<>(
                                 read.createReader(
-                                        new DataSplit(
-                                                0L /* unused */,
-                                                entryWithPartition.getKey(),
-                                                entryWithBucket.getKey(),
-                                                entryWithBucket.getValue(),
-                                                isIncremental)));
+                                        DataSplit.builder()
+                                                .withPartition(entryWithPartition.getKey())
+                                                .withBucket(entryWithBucket.getKey())
+                                                .withDataFiles(entryWithBucket.getValue())
+                                                .isStreaming(isStreaming)
+                                                .build()));
                 while (iterator.hasNext()) {
                     kvs.add(iterator.next().copy(keySerializer, valueSerializer));
                 }

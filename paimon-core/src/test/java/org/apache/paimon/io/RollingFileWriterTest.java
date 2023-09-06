@@ -25,18 +25,23 @@ import org.apache.paimon.format.FileFormat;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.fs.local.LocalFileIO;
 import org.apache.paimon.options.Options;
+import org.apache.paimon.statistics.FieldStatsCollector;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.IntType;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.LongCounter;
+import org.apache.paimon.utils.StatsCollectorFactories;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
 
+import static org.apache.paimon.CoreOptions.FileFormatType;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Test for {@link RollingFileWriter}. */
@@ -55,9 +60,8 @@ public class RollingFileWriterTest {
 
     private RollingFileWriter<InternalRow, DataFileMeta> rollingFileWriter;
 
-    @BeforeEach
-    public void beforeEach() {
-        FileFormat fileFormat = FileFormat.fromIdentifier("avro", new Options());
+    public void initialize(String identifier) {
+        FileFormat fileFormat = FileFormat.fromIdentifier(identifier, new Options());
         rollingFileWriter =
                 new RollingFileWriter<>(
                         () ->
@@ -73,20 +77,33 @@ public class RollingFileWriterTest {
                                                                 .toString())
                                                 .newPath(),
                                         SCHEMA,
-                                        fileFormat.createStatsExtractor(SCHEMA).orElse(null),
+                                        fileFormat
+                                                .createStatsExtractor(
+                                                        SCHEMA,
+                                                        FieldStatsCollector
+                                                                .createFullStatsFactories(
+                                                                        SCHEMA.getFieldCount()))
+                                                .orElse(null),
                                         0L,
                                         new LongCounter(0),
-                                        CoreOptions.FILE_COMPRESSION.defaultValue()),
+                                        CoreOptions.FILE_COMPRESSION.defaultValue(),
+                                        StatsCollectorFactories.createStatsFactories(
+                                                new CoreOptions(new HashMap<>()),
+                                                SCHEMA.getFieldNames())),
                         TARGET_FILE_SIZE);
     }
 
-    @Test
-    public void testRolling() throws IOException {
+    @ParameterizedTest
+    @EnumSource(FileFormatType.class)
+    public void testRolling(FileFormatType formatType) throws IOException {
+        initialize(formatType.toString());
+        int checkInterval =
+                formatType == FileFormatType.ORC ? VectorizedRowBatch.DEFAULT_SIZE : 1000;
         for (int i = 0; i < 3000; i++) {
             rollingFileWriter.write(GenericRow.of(i));
-            if (i < 1000) {
+            if (i < checkInterval) {
                 assertFileNum(1);
-            } else if (i < 2000) {
+            } else if (i < checkInterval * 2) {
                 assertFileNum(2);
             } else {
                 assertFileNum(3);

@@ -148,4 +148,39 @@ public class PartialUpdateITCase extends CatalogITCaseBase {
                 () -> sEnv.from("T").execute().print(),
                 "Partial update continuous reading is not supported");
     }
+
+    @Test
+    public void testSequenceGroup() {
+        sql(
+                "CREATE TABLE SG ("
+                        + "k INT, a INT, b INT, g_1 INT, c INT, d INT, g_2 INT, PRIMARY KEY (k) NOT ENFORCED)"
+                        + " WITH ("
+                        + "'merge-engine'='partial-update', "
+                        + "'fields.g_1.sequence-group'='a,b', "
+                        + "'fields.g_2.sequence-group'='c,d');");
+
+        sql("INSERT INTO SG VALUES (1, 1, 1, 1, 1, 1, 1)");
+
+        // g_2 should not be updated
+        sql("INSERT INTO SG VALUES (1, 2, 2, 2, 2, 2, CAST(NULL AS INT))");
+
+        // select *
+        assertThat(sql("SELECT * FROM SG")).containsExactlyInAnyOrder(Row.of(1, 2, 2, 2, 1, 1, 1));
+
+        // projection
+        assertThat(sql("SELECT c, d FROM SG")).containsExactlyInAnyOrder(Row.of(1, 1));
+
+        // g_1 should not be updated
+        sql("INSERT INTO SG VALUES (1, 3, 3, 1, 3, 3, 3)");
+
+        assertThat(sql("SELECT * FROM SG")).containsExactlyInAnyOrder(Row.of(1, 2, 2, 2, 3, 3, 3));
+
+        // d should be updated by null
+        sql("INSERT INTO SG VALUES (1, 3, 3, 3, 2, 2, CAST(NULL AS INT))");
+        sql("INSERT INTO SG VALUES (1, 4, 4, 4, 2, 2, CAST(NULL AS INT))");
+        sql("INSERT INTO SG VALUES (1, 5, 5, 3, 5, CAST(NULL AS INT), 4)");
+
+        assertThat(sql("SELECT a, b FROM SG")).containsExactlyInAnyOrder(Row.of(4, 4));
+        assertThat(sql("SELECT c, d FROM SG")).containsExactlyInAnyOrder(Row.of(5, null));
+    }
 }

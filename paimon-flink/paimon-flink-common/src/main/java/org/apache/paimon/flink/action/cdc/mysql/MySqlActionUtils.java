@@ -18,12 +18,15 @@
 
 package org.apache.paimon.flink.action.cdc.mysql;
 
-import org.apache.paimon.flink.sink.cdc.UpdatedDataFieldsProcessFunction;
+import org.apache.paimon.catalog.Identifier;
+import org.apache.paimon.flink.action.cdc.CdcActionCommonUtils;
+import org.apache.paimon.flink.action.cdc.ComputedColumn;
+import org.apache.paimon.flink.action.cdc.TypeMapping;
+import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlSchema;
+import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlSchemasInfo;
+import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlTableInfo;
 import org.apache.paimon.schema.Schema;
-import org.apache.paimon.schema.TableSchema;
-import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataType;
-import org.apache.paimon.utils.Preconditions;
 
 import com.ververica.cdc.connectors.mysql.source.MySqlSource;
 import com.ververica.cdc.connectors.mysql.source.MySqlSourceBuilder;
@@ -34,150 +37,143 @@ import com.ververica.cdc.connectors.mysql.table.JdbcUrlUtils;
 import com.ververica.cdc.connectors.mysql.table.StartupOptions;
 import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
 import com.ververica.cdc.debezium.table.DebeziumOptions;
-import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.ConfigOption;
+import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.kafka.connect.json.JsonConverterConfig;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
-import java.util.ArrayList;
+import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.stream.Collectors;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.columnDuplicateErrMsg;
+import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.listCaseConvert;
+import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.mapKeyCaseConvert;
+import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.TINYINT1_NOT_BOOL;
 import static org.apache.paimon.utils.Preconditions.checkArgument;
 
-class MySqlActionUtils {
+/** Utils for MySQL Action. */
+public class MySqlActionUtils {
 
-    static Connection getConnection(Configuration mySqlConfig) throws Exception {
-        return DriverManager.getConnection(
+    public static final ConfigOption<Boolean> SCAN_NEWLY_ADDED_TABLE_ENABLED =
+            ConfigOptions.key("scan.newly-added-table.enabled")
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription(
+                            "Whether capture the scan the newly added tables or not, by default is true.");
+
+    static Connection getConnection(Configuration mySqlConfig, boolean tinyint1NotBool)
+            throws Exception {
+        String url =
                 String.format(
-                        "jdbc:mysql://%s:%d/",
+                        "jdbc:mysql://%s:%d%s",
                         mySqlConfig.get(MySqlSourceOptions.HOSTNAME),
-                        mySqlConfig.get(MySqlSourceOptions.PORT)),
+                        mySqlConfig.get(MySqlSourceOptions.PORT),
+                        // we need to add the `tinyInt1isBit` parameter to the connection url to
+                        // make sure the tinyint(1) in MySQL is converted to bits or not. Refer to
+                        // https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-connp-props-result-sets.html#cj-conn-prop_tinyInt1isBit
+                        tinyint1NotBool ? "?tinyInt1isBit=false" : "");
+
+        return DriverManager.getConnection(
+                url,
                 mySqlConfig.get(MySqlSourceOptions.USERNAME),
                 mySqlConfig.get(MySqlSourceOptions.PASSWORD));
     }
 
-    static void assertSchemaCompatible(TableSchema paimonSchema, Schema mySqlSchema) {
-        if (!schemaCompatible(paimonSchema, mySqlSchema)) {
-            throw new IllegalArgumentException(
-                    "Paimon schema and MySQL schema are not compatible.\n"
-                            + "Paimon fields are: "
-                            + paimonSchema.fields()
-                            + ".\nMySQL fields are: "
-                            + mySqlSchema.fields());
-        }
-    }
-
-    static boolean schemaCompatible(TableSchema paimonSchema, Schema mySqlSchema) {
-        for (DataField field : mySqlSchema.fields()) {
-            int idx = paimonSchema.fieldNames().indexOf(field.name());
-            if (idx < 0) {
-                return false;
+    static MySqlSchemasInfo getMySqlTableInfos(
+            Configuration mySqlConfig,
+            Predicate<String> monitorTablePredication,
+            List<Identifier> excludedTables,
+            TypeMapping typeMapping)
+            throws Exception {
+        Pattern databasePattern =
+                Pattern.compile(mySqlConfig.get(MySqlSourceOptions.DATABASE_NAME));
+        MySqlSchemasInfo mySqlSchemasInfo = new MySqlSchemasInfo();
+        try (Connection conn =
+                MySqlActionUtils.getConnection(
+                        mySqlConfig, typeMapping.containsMode(TINYINT1_NOT_BOOL))) {
+            DatabaseMetaData metaData = conn.getMetaData();
+            try (ResultSet schemas = metaData.getCatalogs()) {
+                while (schemas.next()) {
+                    String databaseName = schemas.getString("TABLE_CAT");
+                    Matcher databaseMatcher = databasePattern.matcher(databaseName);
+                    if (databaseMatcher.matches()) {
+                        try (ResultSet tables = metaData.getTables(databaseName, null, "%", null)) {
+                            while (tables.next()) {
+                                String tableName = tables.getString("TABLE_NAME");
+                                MySqlSchema mySqlSchema =
+                                        MySqlSchema.buildSchema(
+                                                metaData, databaseName, tableName, typeMapping);
+                                Identifier identifier = Identifier.create(databaseName, tableName);
+                                if (monitorTablePredication.test(tableName)) {
+                                    mySqlSchemasInfo.addSchema(identifier, mySqlSchema);
+                                } else {
+                                    excludedTables.add(identifier);
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            DataType type = paimonSchema.fields().get(idx).type();
-            if (UpdatedDataFieldsProcessFunction.canConvert(field.type(), type)
-                    != UpdatedDataFieldsProcessFunction.ConvertAction.CONVERT) {
-                return false;
-            }
         }
-        return true;
+        return mySqlSchemasInfo;
     }
 
     static Schema buildPaimonSchema(
-            MySqlSchema mySqlSchema,
+            MySqlTableInfo mySqlTableInfo,
             List<String> specifiedPartitionKeys,
             List<String> specifiedPrimaryKeys,
             List<ComputedColumn> computedColumns,
-            Map<String, String> paimonConfig,
+            Map<String, String> tableConfig,
             boolean caseSensitive) {
-        Schema.Builder builder = Schema.newBuilder();
-        builder.options(paimonConfig);
+        MySqlSchema mySqlSchema = mySqlTableInfo.schema();
+        LinkedHashMap<String, DataType> sourceColumns =
+                mapKeyCaseConvert(
+                        mySqlSchema.typeMapping(),
+                        caseSensitive,
+                        columnDuplicateErrMsg(mySqlTableInfo.location()));
+        List<String> primaryKeys = listCaseConvert(mySqlSchema.primaryKeys(), caseSensitive);
 
-        // build columns and primary keys from mySqlSchema
-        LinkedHashMap<String, Tuple2<DataType, String>> mySqlFields;
-        List<String> mySqlPrimaryKeys;
-        if (caseSensitive) {
-            mySqlFields = mySqlSchema.fields();
-            mySqlPrimaryKeys = mySqlSchema.primaryKeys();
-        } else {
-            mySqlFields = new LinkedHashMap<>();
-            for (Map.Entry<String, Tuple2<DataType, String>> entry :
-                    mySqlSchema.fields().entrySet()) {
-                String fieldName = entry.getKey();
-                checkArgument(
-                        !mySqlFields.containsKey(fieldName.toLowerCase()),
-                        String.format(
-                                "Duplicate key '%s' in table '%s.%s' appears when converting fields map keys to case-insensitive form.",
-                                fieldName, mySqlSchema.databaseName(), mySqlSchema.tableName()));
-                mySqlFields.put(fieldName.toLowerCase(), entry.getValue());
-            }
-            mySqlPrimaryKeys =
-                    mySqlSchema.primaryKeys().stream()
-                            .map(String::toLowerCase)
-                            .collect(Collectors.toList());
-        }
-
-        for (Map.Entry<String, Tuple2<DataType, String>> entry : mySqlFields.entrySet()) {
-            builder.column(entry.getKey(), entry.getValue().f0, entry.getValue().f1);
-        }
-
-        for (ComputedColumn computedColumn : computedColumns) {
-            builder.column(computedColumn.columnName(), computedColumn.columnType());
-        }
-
-        if (specifiedPrimaryKeys.size() > 0) {
-            for (String key : specifiedPrimaryKeys) {
-                if (!mySqlFields.containsKey(key)
-                        && computedColumns.stream().noneMatch(c -> c.columnName().equals(key))) {
-                    throw new IllegalArgumentException(
-                            "Specified primary key "
-                                    + key
-                                    + " does not exist in MySQL tables or computed columns.");
-                }
-            }
-            builder.primaryKey(specifiedPrimaryKeys);
-        } else if (mySqlPrimaryKeys.size() > 0) {
-            builder.primaryKey(mySqlPrimaryKeys);
-        } else {
-            throw new IllegalArgumentException(
-                    "Primary keys are not specified. "
-                            + "Also, can't infer primary keys from MySQL table schemas because "
-                            + "MySQL tables have no primary keys or have different primary keys.");
-        }
-
-        if (specifiedPartitionKeys.size() > 0) {
-            builder.partitionKeys(specifiedPartitionKeys);
-        }
-
-        return builder.build();
+        return CdcActionCommonUtils.buildPaimonSchema(
+                specifiedPartitionKeys,
+                specifiedPrimaryKeys,
+                computedColumns,
+                tableConfig,
+                sourceColumns,
+                mySqlSchema.comments(),
+                primaryKeys);
     }
 
-    static MySqlSource<String> buildMySqlSource(Configuration mySqlConfig) {
+    static MySqlSource<String> buildMySqlSource(Configuration mySqlConfig, String tableList) {
         validateMySqlConfig(mySqlConfig);
         MySqlSourceBuilder<String> sourceBuilder = MySqlSource.builder();
 
-        String databaseName = mySqlConfig.get(MySqlSourceOptions.DATABASE_NAME);
-        String tableName = mySqlConfig.get(MySqlSourceOptions.TABLE_NAME);
         sourceBuilder
                 .hostname(mySqlConfig.get(MySqlSourceOptions.HOSTNAME))
                 .port(mySqlConfig.get(MySqlSourceOptions.PORT))
                 .username(mySqlConfig.get(MySqlSourceOptions.USERNAME))
                 .password(mySqlConfig.get(MySqlSourceOptions.PASSWORD))
-                .databaseList(databaseName)
-                .tableList(databaseName + "." + tableName);
+                .databaseList(mySqlConfig.get(MySqlSourceOptions.DATABASE_NAME))
+                .tableList(tableList);
 
         mySqlConfig.getOptional(MySqlSourceOptions.SERVER_ID).ifPresent(sourceBuilder::serverId);
         mySqlConfig
                 .getOptional(MySqlSourceOptions.SERVER_TIME_ZONE)
                 .ifPresent(sourceBuilder::serverTimeZone);
+        // MySQL CDC using increment snapshot, splitSize is used instead of fetchSize (as in JDBC
+        // connector). splitSize is the number of records in each snapshot split.
         mySqlConfig
-                .getOptional(MySqlSourceOptions.SCAN_SNAPSHOT_FETCH_SIZE)
-                .ifPresent(sourceBuilder::fetchSize);
+                .getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_SNAPSHOT_CHUNK_SIZE)
+                .ifPresent(sourceBuilder::splitSize);
         mySqlConfig
                 .getOptional(MySqlSourceOptions.CONNECT_TIMEOUT)
                 .ifPresent(sourceBuilder::connectTimeout);
@@ -242,7 +238,14 @@ class MySqlActionUtils {
         customConverterConfigs.put(JsonConverterConfig.DECIMAL_FORMAT_CONFIG, "numeric");
         JsonDebeziumDeserializationSchema schema =
                 new JsonDebeziumDeserializationSchema(true, customConverterConfigs);
-        return sourceBuilder.deserializer(schema).includeSchemaChanges(true).build();
+
+        boolean scanNewlyAddedTables = mySqlConfig.get(SCAN_NEWLY_ADDED_TABLE_ENABLED);
+
+        return sourceBuilder
+                .deserializer(schema)
+                .includeSchemaChanges(true)
+                .scanNewlyAddedTableEnabled(scanNewlyAddedTables)
+                .build();
     }
 
     private static void validateMySqlConfig(Configuration mySqlConfig) {
@@ -266,62 +269,5 @@ class MySqlActionUtils {
                 String.format(
                         "mysql-conf [%s] must be specified.",
                         MySqlSourceOptions.DATABASE_NAME.key()));
-
-        checkArgument(
-                mySqlConfig.get(MySqlSourceOptions.TABLE_NAME) != null,
-                String.format(
-                        "mysql-conf [%s] must be specified.", MySqlSourceOptions.TABLE_NAME.key()));
-    }
-
-    static List<ComputedColumn> buildComputedColumns(
-            List<String> computedColumnArgs, Map<String, DataType> typeMapping) {
-        List<ComputedColumn> computedColumns = new ArrayList<>();
-        for (String columnArg : computedColumnArgs) {
-            String[] kv = columnArg.split("=");
-            if (kv.length != 2) {
-                throw new IllegalArgumentException(
-                        String.format(
-                                "Invalid computed column argument: %s. Please use format 'column-name=expr-name(args, ...)'.",
-                                columnArg));
-            }
-            String columnName = kv[0].trim();
-            String expression = kv[1].trim();
-            // parse expression
-            int left = expression.indexOf('(');
-            int right = expression.indexOf(')');
-            Preconditions.checkArgument(
-                    left > 0 && right > left,
-                    String.format(
-                            "Invalid expression: %s. Please use format 'expr-name(args, ...)'.",
-                            expression));
-
-            String exprName = expression.substring(0, left);
-            String[] args = expression.substring(left + 1, right).split(",");
-            for (int i = 0; i < args.length; i++) {
-                args[i] = args[i].trim();
-            }
-            checkArgument(
-                    args.length >= 1 && args.length <= 2,
-                    "Currently, computed column only supports one or two arguments.");
-
-            String fieldReference = args[0];
-            String literal = args.length == 2 ? args[1] : null;
-            checkArgument(
-                    typeMapping.containsKey(fieldReference),
-                    String.format(
-                            "Referenced field '%s' is not in given MySQL fields: %s.",
-                            fieldReference, typeMapping.keySet()));
-
-            computedColumns.add(
-                    new ComputedColumn(
-                            columnName,
-                            Expression.create(
-                                    exprName,
-                                    fieldReference,
-                                    typeMapping.get(fieldReference),
-                                    literal)));
-        }
-
-        return computedColumns;
     }
 }

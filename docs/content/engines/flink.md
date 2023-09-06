@@ -34,25 +34,28 @@ Paimon currently supports Flink 1.17, 1.16, 1.15 and 1.14. We recommend the late
 
 Download the jar file with corresponding version.
 
+> Currently, paimon provides two types jar: one of which(the bundled jar) is used for read/write data, and the other(action jar) for operations such as manually compaction,
 {{< stable >}}
 
-| Version    | Jar                                                                                                                                                                     |
-|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Flink 1.17 | [paimon-flink-1.17-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.17/{{< version >}}/paimon-flink-1.17-{{< version >}}.jar) |
-| Flink 1.16 | [paimon-flink-1.16-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.16/{{< version >}}/paimon-flink-1.16-{{< version >}}.jar) |
-| Flink 1.15 | [paimon-flink-1.15-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.15/{{< version >}}/paimon-flink-1.15-{{< version >}}.jar) |
-| Flink 1.14 | [paimon-flink-1.14-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.14/{{< version >}}/paimon-flink-1.14-{{< version >}}.jar) |
+| Version    | Type | Jar                                                                                                                                                                     |
+|------------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Flink 1.17 | Bundled Jar  | [paimon-flink-1.17-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.17/{{< version >}}/paimon-flink-1.17-{{< version >}}.jar) |
+| Flink 1.16 | Bundled Jar  | [paimon-flink-1.16-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.16/{{< version >}}/paimon-flink-1.16-{{< version >}}.jar) |
+| Flink 1.15 | Bundled Jar  | [paimon-flink-1.15-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.15/{{< version >}}/paimon-flink-1.15-{{< version >}}.jar) |
+| Flink 1.14 | Bundled Jar  | [paimon-flink-1.14-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-1.14/{{< version >}}/paimon-flink-1.14-{{< version >}}.jar) |
+| Flink Action | Action Jar  | [paimon-flink-action-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-flink-action/{{< version >}}/paimon-flink-action-{{< version >}}.jar) |
 
 {{< /stable >}}
 
 {{< unstable >}}
 
-| Version    | Jar                                                                                                                                   |
-|------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Flink 1.17 | [paimon-flink-1.17-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.17/{{< version >}}/) |
-| Flink 1.16 | [paimon-flink-1.16-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.16/{{< version >}}/) |
-| Flink 1.15 | [paimon-flink-1.15-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.15/{{< version >}}/) |
-| Flink 1.14 | [paimon-flink-1.14-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.14/{{< version >}}/) |
+| Version    | Type | Jar                                                                                                                                   |
+|------------|------|---------------------------------------------------------------------------------------------------------------------------------|
+| Flink 1.17 | Bundled Jar | [paimon-flink-1.17-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.17/{{< version >}}/) |
+| Flink 1.16 | Bundled Jar | [paimon-flink-1.16-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.16/{{< version >}}/) |
+| Flink 1.15 | Bundled Jar | [paimon-flink-1.15-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.15/{{< version >}}/) |
+| Flink 1.14 | Bundled Jar | [paimon-flink-1.14-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.14/{{< version >}}/) |
+| Flink Action | Action Jar | [paimon-flink-action-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-action/{{< version >}}/) |
 
 {{< /unstable >}}
 
@@ -63,9 +66,11 @@ To build from source code, [clone the git repository]({{< github_repo >}}).
 Build bundled jar with the following command.
 - `mvn clean install -DskipTests`
 
-You can find the bundled jar in `./paimon-flink/paimon-flink-<flink-version>/target/paimon-flink-<flink-version>-{{< version >}}.jar`.
+You can find the bundled jar in `./paimon-flink/paimon-flink-<flink-version>/target/paimon-flink-<flink-version>-{{< version >}}.jar`, and the action jar in `./paimon-flink/paimon-flink-action/target/paimon-flink-action-{{< version >}}.jar`.
 
 ## Quick Start
+
+### Using bundled Jar
 
 **Step 1: Download Flink**
 
@@ -86,7 +91,7 @@ cp paimon-flink-*.jar <FLINK_HOME>/lib/
 **Step 3: Copy Hadoop Bundled Jar**
 
 {{< hint info >}}
-If the machine is in a hadoop environment, please ensure the value of the environment variable `HADOOP_CLASSPATH`, you do not need to use the following pre-bundled Hadoop jar.
+If the machine is in a hadoop environment, please ensure the value of the environment variable `HADOOP_CLASSPATH` include path to the common Hadoop libraries, you do not need to use the following pre-bundled Hadoop jar.
 {{< /hint >}}
 
 [Download](https://flink.apache.org/downloads.html) Pre-bundled Hadoop jar and copy the jar file to the `lib` directory of your Flink home.
@@ -120,9 +125,13 @@ You can now start Flink SQL client to execute SQL scripts.
 
 **Step 5: Create a Catalog and a Table**
 
+{{< tabs "Create Flink Catalog" >}}
+
+{{< tab "Catalog" >}}
+
 ```sql
 -- if you're trying out Paimon in a distributed environment,
--- warehouse path should be set to a shared file system, such as HDFS or OSS
+-- the warehouse path should be set to a shared file system, such as HDFS or OSS
 CREATE CATALOG my_catalog WITH (
     'type'='paimon',
     'warehouse'='file:/tmp/paimon'
@@ -136,6 +145,42 @@ CREATE TABLE word_count (
     cnt BIGINT
 );
 ```
+
+{{< /tab >}}
+
+{{< tab "Generic-Catalog" >}}
+
+Using FlinkGenericCatalog, you need to use Hive metastore. Then, you can use all the tables from Paimon, Hive, and
+Flink Generic Tables (Kafka and other tables)!
+
+In this mode, you should use 'connector' option for creating tables.
+
+{{< hint info >}}
+Paimon will use `hive.metastore.warehouse.dir` in your `hive-site.xml`, please use path with scheme.
+For example, `hdfs://...`. Otherwise, Paimon will use the local path.
+{{< /hint >}}
+
+```sql
+CREATE CATALOG my_catalog WITH (
+    'type'='paimon-generic',
+    'hive-conf-dir'='...',
+    'hadoop-conf-dir'='...'
+);
+
+USE CATALOG my_catalog;
+
+-- create a word count table
+CREATE TABLE word_count (
+    word STRING PRIMARY KEY NOT ENFORCED,
+    cnt BIGINT
+) WITH (
+    'connector'='paimon'
+);
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 **Step 6: Write Data**
 
@@ -200,11 +245,50 @@ Stop the Flink local cluster.
 ./bin/stop-cluster.sh
 ```
 
+### Using Action Jar
+After the Flink Local Cluster has been started, you can execute the action jar by using the following command
+
+```
+<FLINK_HOME>/bin/flink run \
+ /path/to/paimon-flink-action-{{< version >}}.jar \
+ <action>
+ <args>
+``` 
+
+The following command will used to compact a table
+
+{{< label Batch >}}
+```
+<FLINK_HOME>/bin/flink run \
+ /path/to/paimon-flink-action-{{< version >}}.jar \
+ compact \
+ --path <TABLE_PATH>
+```
+
 ## Supported Flink Data Type
 
-See [Flink Data Types](https://nightlies.apache.org/flink/flink-docs-release-1.16/docs/dev/table/types/).
+See [Flink Data Types](https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/table/types/).
 
 All Flink data types are supported, except that
 
 * `MULTISET` is not supported.
 * `MAP` is not supported as primary keys.
+
+## Use Flink Managed Memory
+
+Paimon tasks can create memory pools based on executor memory which will be managed by Flink executor, such as managed memory in Flink task manager. It will improve the stability and performance of sinks by managing writer buffers for multiple tasks through executor.
+
+The following properties can be set if using Flink managed memory:
+
+| Option    | Default | Description                                                                                                                                                                    |
+|------------|----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| sink.use-managed-memory-allocator | false | If true, flink sink will use managed memory for merge tree; otherwise, it will create an independent memory allocator, which means each task allocates and manages its own memory pool (heap memory), if there are too many tasks in one Executor, it may cause performance issues and even OOM. |
+| sink.managed.writer-buffer-memory | 256M  | Weight of writer buffer in managed memory, Flink will compute the memory size, for writer according to the weight, the actual memory used depends on the running environment. Now the memory size defined in this property are equals to the exact memory allocated to write buffer in runtime. |
+
+**Use In SQL**
+Users can set memory weight in SQL for Flink Managed Memory, then Flink sink operator will get the memory pool size and create allocator for Paimon writer.
+
+```sql
+INSERT INTO paimon_table /*+ OPTIONS('sink.use-managed-memory-allocator'='true', 'sink.managed.writer-buffer-memory'='256M') */
+SELECT * FROM ....;
+```

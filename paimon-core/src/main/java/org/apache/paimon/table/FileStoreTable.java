@@ -70,12 +70,19 @@ public interface FileStoreTable extends DataTable {
 
     TableSchema schema();
 
+    FileStore<?> store();
+
+    BucketMode bucketMode();
+
+    CatalogEnvironment catalogEnvironment();
+
     @Override
     FileStoreTable copy(Map<String, String> dynamicOptions);
 
     /** Sometimes we have to change some Immutable options to implement features. */
     FileStoreTable internalCopyWithoutCheck(Map<String, String> dynamicOptions);
 
+    /** TODO: this method is weird, old options will overwrite new options. */
     FileStoreTable copyWithLatestSchema();
 
     @Override

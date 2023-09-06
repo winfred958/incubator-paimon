@@ -25,7 +25,6 @@ import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.data.serializer.InternalRowSerializer;
 import org.apache.paimon.fs.FileIOFinder;
 import org.apache.paimon.fs.local.LocalFileIO;
-import org.apache.paimon.operation.ScanKind;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.predicate.PredicateBuilder;
@@ -33,11 +32,14 @@ import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.schema.SchemaUtils;
 import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.table.sink.CommitMessage;
 import org.apache.paimon.table.sink.StreamTableCommit;
 import org.apache.paimon.table.sink.StreamTableWrite;
 import org.apache.paimon.table.source.DataSplit;
 import org.apache.paimon.table.source.ReadBuilder;
+import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.table.source.Split;
+import org.apache.paimon.table.source.StreamTableScan;
 import org.apache.paimon.table.source.TableRead;
 
 import org.junit.jupiter.api.Test;
@@ -64,7 +66,7 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
         writeData();
         FileStoreTable table = createFileStoreTable();
 
-        List<Split> splits = toSplits(table.newSnapshotSplitReader().splits());
+        List<Split> splits = toSplits(table.newSnapshotReader().read().dataSplits());
         TableRead read = table.newRead();
         assertThat(getResult(read, splits, binaryRow(1), 0, BATCH_ROW_TO_STRING))
                 .hasSameElementsAs(
@@ -88,7 +90,7 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
         writeData();
         FileStoreTable table = createFileStoreTable();
 
-        List<Split> splits = toSplits(table.newSnapshotSplitReader().splits());
+        List<Split> splits = toSplits(table.newSnapshotReader().read().dataSplits());
         TableRead read = table.newRead().withProjection(PROJECTION);
         assertThat(getResult(read, splits, binaryRow(1), 0, BATCH_PROJECTED_ROW_TO_STRING))
                 .hasSameElementsAs(Arrays.asList("100|10", "101|11", "102|12", "101|11", "102|12"));
@@ -104,7 +106,7 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
 
         Predicate predicate = builder.equal(2, 201L);
         List<Split> splits =
-                toSplits(table.newSnapshotSplitReader().withFilter(predicate).splits());
+                toSplits(table.newSnapshotReader().withFilter(predicate).read().dataSplits());
         TableRead read = table.newRead();
         assertThat(getResult(read, splits, binaryRow(1), 0, BATCH_ROW_TO_STRING)).isEmpty();
         assertThat(getResult(read, splits, binaryRow(2), 0, BATCH_ROW_TO_STRING))
@@ -133,7 +135,7 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
         commit.commit(2, write.prepareCommit(true, 2));
         write.close();
 
-        List<Split> splits = toSplits(table.newSnapshotSplitReader().splits());
+        List<Split> splits = toSplits(table.newSnapshotReader().read().dataSplits());
         int[] partitions =
                 splits.stream()
                         .map(split -> ((DataSplit) split).partition().getInt(0))
@@ -162,7 +164,7 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
 
         write.close();
 
-        List<Split> splits = toSplits(table.newSnapshotSplitReader().splits());
+        List<Split> splits = toSplits(table.newSnapshotReader().read().dataSplits());
         int[] partitions =
                 splits.stream()
                         .map(split -> ((DataSplit) split).partition().getInt(0))
@@ -172,12 +174,46 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
     }
 
     @Test
+    public void testStreamingSplitInUnawareBucketMode() throws Exception {
+        // in unaware-bucket mode, we split files into splits all the time
+        FileStoreTable table =
+                createUnawareBucketFileStoreTable(
+                        options -> options.set(CoreOptions.SOURCE_SPLIT_TARGET_SIZE.key(), "1 M"));
+
+        StreamTableScan scan = table.newStreamScan();
+
+        StreamTableWrite write = table.newWrite(commitUser);
+        StreamTableCommit commit = table.newCommit(commitUser);
+        List<CommitMessage> result = new ArrayList<>();
+        write.write(rowData(3, 33, 303L));
+        result.addAll(write.prepareCommit(true, 0));
+        write.write(rowData(1, 10, 100L));
+        result.addAll(write.prepareCommit(true, 0));
+        write.write(rowData(2, 22, 202L));
+        result.addAll(write.prepareCommit(true, 0));
+        commit.commit(0, result);
+        result.clear();
+        assertThat(scan.plan().splits().size()).isEqualTo(3);
+
+        write.write(rowData(3, 33, 303L));
+        result.addAll(write.prepareCommit(true, 1));
+        write.write(rowData(1, 10, 100L));
+        result.addAll(write.prepareCommit(true, 1));
+        write.write(rowData(2, 22, 202L));
+        result.addAll(write.prepareCommit(true, 1));
+        commit.commit(1, result);
+        assertThat(scan.plan().splits().size()).isEqualTo(3);
+
+        write.close();
+    }
+
+    @Test
     public void testStreamingProjection() throws Exception {
         writeData();
         FileStoreTable table = createFileStoreTable();
 
         List<Split> splits =
-                toSplits(table.newSnapshotSplitReader().withKind(ScanKind.DELTA).splits());
+                toSplits(table.newSnapshotReader().withMode(ScanMode.DELTA).read().dataSplits());
         TableRead read = table.newRead().withProjection(PROJECTION);
         assertThat(getResult(read, splits, binaryRow(1), 0, STREAMING_PROJECTED_ROW_TO_STRING))
                 .isEqualTo(Arrays.asList("+101|11", "+102|12"));
@@ -194,10 +230,11 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
         Predicate predicate = builder.equal(2, 101L);
         List<Split> splits =
                 toSplits(
-                        table.newSnapshotSplitReader()
-                                .withKind(ScanKind.DELTA)
+                        table.newSnapshotReader()
+                                .withMode(ScanMode.DELTA)
                                 .withFilter(predicate)
-                                .splits());
+                                .read()
+                                .dataSplits());
         TableRead read = table.newRead();
         assertThat(getResult(read, splits, binaryRow(1), 0, STREAMING_ROW_TO_STRING))
                 .isEqualTo(
@@ -252,10 +289,11 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
                 new PredicateBuilder(table.schema().logicalRowType()).equal(0, partition);
         List<Split> splits =
                 toSplits(
-                        table.newSnapshotSplitReader()
+                        table.newSnapshotReader()
                                 .withFilter(partitionFilter)
                                 .withBucket(bucket)
-                                .splits());
+                                .read()
+                                .dataSplits());
         TableRead read = table.newRead();
 
         assertThat(getResult(read, splits, binaryRow(partition), bucket, STREAMING_ROW_TO_STRING))
@@ -368,6 +406,25 @@ public class AppendOnlyFileStoreTableTest extends FileStoreTableTestBase {
                         new Schema(
                                 OVERWRITE_TEST_ROW_TYPE.getFields(),
                                 Arrays.asList("pt0", "pt1"),
+                                Collections.emptyList(),
+                                conf.toMap(),
+                                ""));
+        return new AppendOnlyFileStoreTable(FileIOFinder.find(tablePath), tablePath, tableSchema);
+    }
+
+    protected FileStoreTable createUnawareBucketFileStoreTable(Consumer<Options> configure)
+            throws Exception {
+        Options conf = new Options();
+        conf.set(CoreOptions.PATH, tablePath.toString());
+        conf.set(CoreOptions.WRITE_MODE, WriteMode.APPEND_ONLY);
+        conf.set(CoreOptions.BUCKET, -1);
+        configure.accept(conf);
+        TableSchema tableSchema =
+                SchemaUtils.forceCommit(
+                        new SchemaManager(LocalFileIO.create(), tablePath),
+                        new Schema(
+                                ROW_TYPE.getFields(),
+                                Collections.emptyList(),
                                 Collections.emptyList(),
                                 conf.toMap(),
                                 ""));

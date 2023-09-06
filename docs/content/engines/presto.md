@@ -43,6 +43,7 @@ Download the jar file with corresponding version.
 | [0.236, 0.268) | [paimon-presto-0.236-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-presto-0.236/{{< version >}}/paimon-presto-0.236-{{< version >}}.jar) |
 | [0.268, 0.273) | [paimon-presto-0.268-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-presto-0.268/{{< version >}}/paimon-presto-0.268-{{< version >}}.jar) |
 | [0.273, latest] | [paimon-presto-0.273-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-presto-0.273/{{< version >}}/paimon-presto-0.273-{{< version >}}.jar) |
+| Presto SQL 332  | [paimon-prestosql-332-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-prestosql-332/{{< version >}}/paimon-prestosql-332-{{< version >}}.jar)|
 
 {{< /stable >}}
 
@@ -53,6 +54,7 @@ Download the jar file with corresponding version.
 | [0.236, 0.268) | [paimon-presto-0.236-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-presto-0.236/{{< version >}}/) |
 | [0.268, 0.273) | [paimon-presto-0.268-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-presto-0.268/{{< version >}}/) |
 | [0.273, latest] | [paimon-presto-0.273-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-presto-0.273/{{< version >}}/) |
+| Presto SQL 332  | [paimon-prestosql-332-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-prestosql-332/{{< version >}}/)                           |
 
 {{< /unstable >}}
 
@@ -69,6 +71,18 @@ mvn clean install -DskipTests
 You can find Presto connector jar in `./paimon-presto-<presto-version>/target/paimon-presto-*.jar`.
 
 Then, copy `paimon-presto-*.jar and flink-shaded-hadoop-*-uber-*.jar` to plugin/paimon.
+
+## Tmp Dir
+
+Paimon will unzip some jars to the tmp directory for codegen. By default, Presto will use `'/tmp'` as the temporary
+directory, but `'/tmp'` may be periodically deleted.
+
+You can configure this environment variable when Presto starts:
+```shell
+-Djava.io.tmpdir=/path/to/other/tmpdir
+```
+
+Let Paimon use a secure temporary directory.
 
 ## Configure Paimon Catalog
 
@@ -87,7 +101,7 @@ If you are using HDFS, choose one of the following ways to configure your HDFS:
 
 ## Kerberos
 
-You can configure kerberos keytag file when using KERBEROS authentication in the properties.
+You can configure kerberos keytab file when using KERBEROS authentication in the properties.
 
 ```
 security.kerberos.login.principal=hadoop-user
@@ -114,7 +128,7 @@ CREATE TABLE paimon.test_db.orders (
 WITH (
     file_format = 'ORC',
     primary_key = ARRAY['order_key','order_date'],
-    partitioned_by = ARRAY['orderdate'],
+    partitioned_by = ARRAY['order_date'],
     bucket = '2',
     bucket_key = 'order_key',
     changelog_producer = 'input'
@@ -133,7 +147,7 @@ CREATE TABLE paimon.test_db.orders (
 WITH (
     file_format = 'ORC',
     primary_key = ARRAY['order_key','order_date'],
-    partitioned_by = ARRAY['orderdate'],
+    partitioned_by = ARRAY['order_date'],
     bucket = '2',
     bucket_key = 'order_key',
     changelog_producer = 'input'

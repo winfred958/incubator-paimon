@@ -22,6 +22,9 @@ import org.apache.paimon.flink.action.cdc.mysql.MySqlContainer;
 import org.apache.paimon.flink.action.cdc.mysql.MySqlVersion;
 import org.apache.paimon.tests.E2eTestBase;
 
+import org.apache.paimon.shade.guava30.com.google.common.collect.ImmutableMap;
+
+import org.apache.hadoop.shaded.org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,10 +34,15 @@ import org.testcontainers.containers.Container;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.lifecycle.Startables;
 
+import javax.annotation.Nullable;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -48,6 +56,10 @@ public abstract class MySqlCdcE2eTestBase extends E2eTestBase {
     private static final String USER = "paimonuser";
     private static final String PASSWORD = "paimonpw";
 
+    protected static final String ACTION_SYNC_TABLE = "mysql-sync-table";
+
+    protected static final String ACTION_SYNC_DATABASE = "mysql-sync-database";
+
     private final MySqlVersion mySqlVersion;
     protected MySqlContainer mySqlContainer;
 
@@ -56,11 +68,6 @@ public abstract class MySqlCdcE2eTestBase extends E2eTestBase {
     protected String useCatalogCmd;
 
     protected MySqlCdcE2eTestBase(MySqlVersion mySqlVersion) {
-        this(mySqlVersion, false);
-    }
-
-    protected MySqlCdcE2eTestBase(MySqlVersion mySqlVersion, boolean withHive) {
-        super(false, withHive);
         this.mySqlVersion = mySqlVersion;
     }
 
@@ -103,46 +110,15 @@ public abstract class MySqlCdcE2eTestBase extends E2eTestBase {
 
     @Test
     public void testSyncTable() throws Exception {
-        String runActionCommand =
-                String.join(
-                        " ",
-                        "bin/flink",
-                        "run",
-                        "-c",
-                        "org.apache.paimon.flink.action.FlinkActions",
-                        "-D",
-                        "execution.checkpointing.interval=1s",
-                        "--detached",
-                        "lib/paimon-flink.jar",
-                        "mysql-sync-table",
-                        "--warehouse",
-                        warehousePath,
-                        "--database",
-                        "default",
-                        "--table",
-                        "ts_table",
-                        "--partition-keys",
-                        "pt",
-                        "--primary-keys",
-                        "pt,_id",
-                        "--mysql-conf",
-                        "hostname=mysql-1",
-                        "--mysql-conf",
-                        String.format("port=%d", MySqlContainer.MYSQL_PORT),
-                        "--mysql-conf",
-                        String.format("username='%s'", mySqlContainer.getUsername()),
-                        "--mysql-conf",
-                        String.format("password='%s'", mySqlContainer.getPassword()),
-                        "--mysql-conf",
-                        "database-name='paimon_sync_table'",
-                        "--mysql-conf",
-                        "table-name='schema_evolution_.+'",
-                        "--table-conf",
-                        "bucket=2");
-        Container.ExecResult execResult =
-                jobManager.execInContainer("su", "flink", "-c", runActionCommand);
-        LOG.info(execResult.getStdout());
-        LOG.info(execResult.getStderr());
+        runAction(
+                ACTION_SYNC_TABLE,
+                "pt",
+                "pt,_id",
+                null,
+                ImmutableMap.of(),
+                ImmutableMap.of(
+                        "database-name", "paimon_sync_table", "table-name", "schema_evolution_.+"),
+                ImmutableMap.of("bucket", "2"));
 
         try (Connection conn = getMySqlConnection();
                 Statement statement = conn.createStatement()) {
@@ -221,35 +197,14 @@ public abstract class MySqlCdcE2eTestBase extends E2eTestBase {
 
     @Test
     public void testSyncDatabase() throws Exception {
-        String runActionCommand =
-                String.join(
-                        " ",
-                        "bin/flink",
-                        "run",
-                        "-c",
-                        "org.apache.paimon.flink.action.FlinkActions",
-                        "-D",
-                        "execution.checkpointing.interval=1s",
-                        "--detached",
-                        "lib/paimon-flink.jar",
-                        "mysql-sync-database",
-                        "--warehouse",
-                        warehousePath,
-                        "--database",
-                        "default",
-                        "--mysql-conf",
-                        "hostname=mysql-1",
-                        "--mysql-conf",
-                        String.format("port=%d", MySqlContainer.MYSQL_PORT),
-                        "--mysql-conf",
-                        String.format("username='%s'", mySqlContainer.getUsername()),
-                        "--mysql-conf",
-                        String.format("password='%s'", mySqlContainer.getPassword()),
-                        "--mysql-conf",
-                        "database-name='paimon_sync_database'",
-                        "--table-conf",
-                        "bucket=2");
-        jobManager.execInContainer("su", "flink", "-c", runActionCommand);
+        runAction(
+                ACTION_SYNC_DATABASE,
+                null,
+                null,
+                null,
+                ImmutableMap.of(),
+                ImmutableMap.of("database-name", "paimon_sync_database"),
+                ImmutableMap.of("bucket", "2"));
 
         try (Connection conn = getMySqlConnection();
                 Statement statement = conn.createStatement()) {
@@ -328,5 +283,84 @@ public abstract class MySqlCdcE2eTestBase extends E2eTestBase {
 
     protected void cancelJob(String jobId) throws Exception {
         jobManager.execInContainer("bin/flink", "cancel", jobId);
+    }
+
+    protected void runAction(
+            String action,
+            @Nullable String partitionKeys,
+            @Nullable String primaryKeys,
+            @Nullable String typeMappingOptions,
+            Map<String, String> computedColumn,
+            Map<String, String> mysqlConf,
+            Map<String, String> tableConf)
+            throws Exception {
+
+        String partitionKeysStr =
+                StringUtils.isBlank(partitionKeys) ? "" : "--partition-keys " + partitionKeys;
+        String primaryKeysStr =
+                StringUtils.isBlank(primaryKeys) ? "" : "--primary-keys " + primaryKeys;
+        String typeMappingStr =
+                StringUtils.isBlank(typeMappingOptions)
+                        ? ""
+                        : "--type-mapping " + typeMappingOptions;
+        String tableStr = action.equals(ACTION_SYNC_TABLE) ? "--table ts_table" : "";
+
+        List<String> computedColumns =
+                computedColumn.keySet().stream()
+                        .map(key -> String.format("%s=%s", key, computedColumn.get(key)))
+                        .flatMap(s -> Stream.of("--computed-column", s))
+                        .collect(Collectors.toList());
+
+        List<String> mysqlConfs =
+                mysqlConf.keySet().stream()
+                        .map(key -> String.format("%s=%s", key, mysqlConf.get(key)))
+                        .flatMap(s -> Stream.of("--mysql-conf", s))
+                        .collect(Collectors.toList());
+
+        List<String> tableConfs =
+                tableConf.keySet().stream()
+                        .map(key -> String.format("%s=%s", key, tableConf.get(key)))
+                        .flatMap(s -> Stream.of("--table-conf", s))
+                        .collect(Collectors.toList());
+
+        String runActionCommand =
+                String.join(
+                        " ",
+                        "bin/flink",
+                        "run",
+                        "-D",
+                        "execution.checkpointing.interval=1s",
+                        "--detached",
+                        "lib/paimon-flink-action.jar",
+                        action,
+                        "--warehouse",
+                        warehousePath,
+                        "--database",
+                        "default",
+                        tableStr,
+                        partitionKeysStr,
+                        primaryKeysStr,
+                        typeMappingStr,
+                        "--mysql-conf",
+                        "hostname=mysql-1",
+                        "--mysql-conf",
+                        String.format("port=%d", MySqlContainer.MYSQL_PORT),
+                        "--mysql-conf",
+                        String.format("username='%s'", mySqlContainer.getUsername()),
+                        "--mysql-conf",
+                        String.format("password='%s'", mySqlContainer.getPassword()));
+
+        runActionCommand +=
+                " "
+                        + String.join(" ", computedColumns)
+                        + " "
+                        + String.join(" ", mysqlConfs)
+                        + " "
+                        + String.join(" ", tableConfs);
+
+        Container.ExecResult execResult =
+                jobManager.execInContainer("su", "flink", "-c", runActionCommand);
+        LOG.info(execResult.getStdout());
+        LOG.info(execResult.getStderr());
     }
 }

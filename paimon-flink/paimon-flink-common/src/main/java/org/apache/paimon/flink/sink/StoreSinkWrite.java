@@ -21,11 +21,15 @@ package org.apache.paimon.flink.sink;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.io.DataFileMeta;
+import org.apache.paimon.memory.MemoryPoolFactory;
+import org.apache.paimon.memory.MemorySegmentPool;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.sink.SinkRecord;
 import org.apache.paimon.table.sink.TableWriteImpl;
 
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
+
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -45,6 +49,8 @@ public interface StoreSinkWrite {
     List<Committable> prepareCommit(boolean waitCompaction, long checkpointId) throws IOException;
 
     void snapshotState() throws Exception;
+
+    boolean streamingMode();
 
     void close() throws Exception;
 
@@ -68,6 +74,19 @@ public interface StoreSinkWrite {
                 FileStoreTable table,
                 String commitUser,
                 StoreSinkWriteState state,
-                IOManager ioManager);
+                IOManager ioManager,
+                @Nullable MemorySegmentPool memoryPool);
+    }
+
+    /** Provider of {@link StoreSinkWrite} that uses given write buffer. */
+    @FunctionalInterface
+    interface WithWriteBufferProvider extends Serializable {
+
+        StoreSinkWrite provide(
+                FileStoreTable table,
+                String commitUser,
+                StoreSinkWriteState state,
+                IOManager ioManager,
+                @Nullable MemoryPoolFactory memoryPoolFactory);
     }
 }

@@ -18,63 +18,33 @@
 
 package org.apache.paimon.flink.sink;
 
-import org.apache.paimon.flink.VersionedSerializerWrapper;
-import org.apache.paimon.manifest.ManifestCommittableSerializer;
-import org.apache.paimon.operation.Lock;
 import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.util.function.SerializableFunction;
 
 import javax.annotation.Nullable;
 
 import java.util.Map;
 
 /** {@link FlinkSink} for writing records into paimon. */
-public class FileStoreSink extends FlinkSink<RowData> {
+public class FileStoreSink extends FlinkWriteSink<RowData> {
 
     private static final long serialVersionUID = 1L;
 
-    private final Lock.Factory lockFactory;
-    @Nullable private final Map<String, String> overwritePartition;
     @Nullable private final LogSinkFunction logSinkFunction;
 
     public FileStoreSink(
             FileStoreTable table,
-            Lock.Factory lockFactory,
             @Nullable Map<String, String> overwritePartition,
             @Nullable LogSinkFunction logSinkFunction) {
-        super(table, overwritePartition != null);
-        this.lockFactory = lockFactory;
-        this.overwritePartition = overwritePartition;
+        super(table, overwritePartition);
         this.logSinkFunction = logSinkFunction;
     }
 
     @Override
     protected OneInputStreamOperator<RowData, Committable> createWriteOperator(
-            StoreSinkWrite.Provider writeProvider, boolean isStreaming, String commitUser) {
+            StoreSinkWrite.Provider writeProvider, String commitUser) {
         return new RowDataStoreWriteOperator(table, logSinkFunction, writeProvider, commitUser);
-    }
-
-    @Override
-    protected SerializableFunction<String, Committer> createCommitterFactory(
-            boolean streamingCheckpointEnabled) {
-        // If checkpoint is enabled for streaming job, we have to
-        // commit new files list even if they're empty.
-        // Otherwise we can't tell if the commit is successful after
-        // a restart.
-        return user ->
-                new StoreCommitter(
-                        table.newCommit(user)
-                                .withOverwrite(overwritePartition)
-                                .withLock(lockFactory.create())
-                                .ignoreEmptyCommit(!streamingCheckpointEnabled));
-    }
-
-    @Override
-    protected CommittableStateManager createCommittableStateManager() {
-        return new RestoreAndFailCommittableStateManager(
-                () -> new VersionedSerializerWrapper<>(new ManifestCommittableSerializer()));
     }
 }

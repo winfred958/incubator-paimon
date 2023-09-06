@@ -28,6 +28,7 @@ import org.apache.paimon.utils.JsonSerdeUtil;
 
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonGetter;
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonInclude;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 
 import javax.annotation.Nullable;
@@ -37,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * This file is the entrance to all data committed at some specific time point.
@@ -53,10 +55,10 @@ import java.util.Map;
  * <p>Unversioned change list:
  *
  * <ul>
- *   <li>Since paimon 0.22 and paimon 0.3, commitIdentifier is changed from a String to a long
- *       value. For paimon < 0.22, only Flink connectors have paimon sink and they use checkpointId
- *       as commitIdentifier (which is a long value). Json can automatically perform type conversion
- *       so there is no compatibility issue.
+ *   <li>Since paimon 0.2 and paimon 0.3, commitIdentifier is changed from a String to a long value.
+ *       For paimon < 0.2, only Flink connectors have paimon sink and they use checkpointId as
+ *       commitIdentifier (which is a long value). Json can automatically perform type conversion so
+ *       there is no compatibility issue.
  * </ul>
  */
 public class Snapshot {
@@ -72,6 +74,7 @@ public class Snapshot {
     private static final String FIELD_BASE_MANIFEST_LIST = "baseManifestList";
     private static final String FIELD_DELTA_MANIFEST_LIST = "deltaManifestList";
     private static final String FIELD_CHANGELOG_MANIFEST_LIST = "changelogManifestList";
+    private static final String FIELD_INDEX_MANIFEST = "indexManifest";
     private static final String FIELD_COMMIT_USER = "commitUser";
     private static final String FIELD_COMMIT_IDENTIFIER = "commitIdentifier";
     private static final String FIELD_COMMIT_KIND = "commitKind";
@@ -80,7 +83,7 @@ public class Snapshot {
     private static final String FIELD_TOTAL_RECORD_COUNT = "totalRecordCount";
     private static final String FIELD_DELTA_RECORD_COUNT = "deltaRecordCount";
     private static final String FIELD_CHANGELOG_RECORD_COUNT = "changelogRecordCount";
-    private static final String FILED_WATERMARK = "watermark";
+    private static final String FIELD_WATERMARK = "watermark";
 
     // version of snapshot
     // null for paimon <= 0.2
@@ -108,6 +111,12 @@ public class Snapshot {
     @JsonProperty(FIELD_CHANGELOG_MANIFEST_LIST)
     @Nullable
     private final String changelogManifestList;
+
+    // a manifest recording all index files of this table
+    // null if no index file
+    @JsonProperty(FIELD_INDEX_MANIFEST)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private final String indexManifest;
 
     @JsonProperty(FIELD_COMMIT_USER)
     private final String commitUser;
@@ -153,7 +162,7 @@ public class Snapshot {
     // null for paimon <= 0.3
     // null if there is no watermark in new committing, and the previous snapshot does not have a
     // watermark
-    @JsonProperty(FILED_WATERMARK)
+    @JsonProperty(FIELD_WATERMARK)
     @Nullable
     private final Long watermark;
 
@@ -163,6 +172,7 @@ public class Snapshot {
             String baseManifestList,
             String deltaManifestList,
             @Nullable String changelogManifestList,
+            @Nullable String indexManifest,
             String commitUser,
             long commitIdentifier,
             CommitKind commitKind,
@@ -179,6 +189,7 @@ public class Snapshot {
                 baseManifestList,
                 deltaManifestList,
                 changelogManifestList,
+                indexManifest,
                 commitUser,
                 commitIdentifier,
                 commitKind,
@@ -198,6 +209,7 @@ public class Snapshot {
             @JsonProperty(FIELD_BASE_MANIFEST_LIST) String baseManifestList,
             @JsonProperty(FIELD_DELTA_MANIFEST_LIST) String deltaManifestList,
             @JsonProperty(FIELD_CHANGELOG_MANIFEST_LIST) @Nullable String changelogManifestList,
+            @JsonProperty(FIELD_INDEX_MANIFEST) @Nullable String indexManifest,
             @JsonProperty(FIELD_COMMIT_USER) String commitUser,
             @JsonProperty(FIELD_COMMIT_IDENTIFIER) long commitIdentifier,
             @JsonProperty(FIELD_COMMIT_KIND) CommitKind commitKind,
@@ -206,13 +218,14 @@ public class Snapshot {
             @JsonProperty(FIELD_TOTAL_RECORD_COUNT) Long totalRecordCount,
             @JsonProperty(FIELD_DELTA_RECORD_COUNT) Long deltaRecordCount,
             @JsonProperty(FIELD_CHANGELOG_RECORD_COUNT) Long changelogRecordCount,
-            @JsonProperty(FILED_WATERMARK) Long watermark) {
+            @JsonProperty(FIELD_WATERMARK) Long watermark) {
         this.version = version;
         this.id = id;
         this.schemaId = schemaId;
         this.baseManifestList = baseManifestList;
         this.deltaManifestList = deltaManifestList;
         this.changelogManifestList = changelogManifestList;
+        this.indexManifest = indexManifest;
         this.commitUser = commitUser;
         this.commitIdentifier = commitIdentifier;
         this.commitKind = commitKind;
@@ -254,6 +267,12 @@ public class Snapshot {
     @Nullable
     public String changelogManifestList() {
         return changelogManifestList;
+    }
+
+    @JsonGetter(FIELD_INDEX_MANIFEST)
+    @Nullable
+    public String indexManifest() {
+        return indexManifest;
     }
 
     @JsonGetter(FIELD_COMMIT_USER)
@@ -299,7 +318,7 @@ public class Snapshot {
         return changelogRecordCount;
     }
 
-    @JsonGetter(FILED_WATERMARK)
+    @JsonGetter(FIELD_WATERMARK)
     @Nullable
     public Long watermark() {
         return watermark;
@@ -385,6 +404,51 @@ public class Snapshot {
         } catch (IOException e) {
             throw new RuntimeException("Fails to read snapshot from path " + path, e);
         }
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+                version,
+                id,
+                schemaId,
+                baseManifestList,
+                deltaManifestList,
+                changelogManifestList,
+                indexManifest,
+                commitUser,
+                commitIdentifier,
+                commitKind,
+                timeMillis,
+                logOffsets,
+                totalRecordCount,
+                deltaRecordCount,
+                changelogRecordCount,
+                watermark);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof Snapshot)) {
+            return false;
+        }
+        Snapshot that = (Snapshot) o;
+        return Objects.equals(version, that.version)
+                && id == that.id
+                && schemaId == that.schemaId
+                && Objects.equals(baseManifestList, that.baseManifestList)
+                && Objects.equals(deltaManifestList, that.deltaManifestList)
+                && Objects.equals(changelogManifestList, that.changelogManifestList)
+                && Objects.equals(indexManifest, that.indexManifest)
+                && Objects.equals(commitUser, that.commitUser)
+                && commitIdentifier == that.commitIdentifier
+                && commitKind == that.commitKind
+                && timeMillis == that.timeMillis
+                && Objects.equals(logOffsets, that.logOffsets)
+                && Objects.equals(totalRecordCount, that.totalRecordCount)
+                && Objects.equals(deltaRecordCount, that.deltaRecordCount)
+                && Objects.equals(changelogRecordCount, that.changelogRecordCount)
+                && Objects.equals(watermark, that.watermark);
     }
 
     /** Type of changes in this snapshot. */

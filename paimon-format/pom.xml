@@ -25,7 +25,7 @@ under the License.
     <parent>
         <artifactId>paimon-parent</artifactId>
         <groupId>org.apache.paimon</groupId>
-        <version>0.5-SNAPSHOT</version>
+        <version>0.6-SNAPSHOT</version>
     </parent>
 
     <artifactId>paimon-format</artifactId>
@@ -198,6 +198,13 @@ under the License.
 
         <dependency>
             <groupId>org.apache.paimon</groupId>
+            <artifactId>paimon-test-utils</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.paimon</groupId>
             <artifactId>paimon-common</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
@@ -291,6 +298,9 @@ under the License.
                                     <include>org.apache.parquet:parquet-format-structures</include>
                                     <include>org.apache.parquet:parquet-jackson</include>
                                     <include>commons-pool:commons-pool</include>
+
+                                    <!-- compress -->
+                                    <include>com.github.luben:zstd-jni</include>
                                 </includes>
                             </artifactSet>
                             <filters>

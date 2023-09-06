@@ -19,8 +19,10 @@
 package org.apache.paimon.flink.sink.cdc;
 
 import org.apache.paimon.CoreOptions;
+import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.CatalogUtils;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.flink.FlinkCatalogFactory;
 import org.apache.paimon.flink.util.AbstractTestBase;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
@@ -53,6 +55,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 
 /** IT cases for {@link FlinkCdcSyncDatabaseSinkBuilder}. */
 public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
@@ -65,6 +68,16 @@ public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
     @Test
     @Timeout(120)
     public void testRandomCdcEvents() throws Exception {
+        innerTestRandomCdcEvents(() -> ThreadLocalRandom.current().nextInt(5) + 1);
+    }
+
+    @Test
+    @Timeout(120)
+    public void testRandomCdcEventsDynamicBucket() throws Exception {
+        innerTestRandomCdcEvents(() -> -1);
+    }
+
+    private void innerTestRandomCdcEvents(Supplier<Integer> bucket) throws Exception {
         ThreadLocalRandom random = ThreadLocalRandom.current();
 
         int numTables = random.nextInt(3) + 1;
@@ -74,7 +87,6 @@ public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
         int maxSchemaChanges = 10;
         int maxPartitions = 3;
         int maxKeys = 150;
-        int maxBuckets = 5;
 
         String failingName = UUID.randomUUID().toString();
 
@@ -121,7 +133,7 @@ public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
                             testTable.initialRowType(),
                             Collections.singletonList("pt"),
                             Arrays.asList("pt", "k"),
-                            random.nextInt(maxBuckets) + 1);
+                            bucket.get());
             fileStoreTables.add(fileStoreTable);
         }
 
@@ -136,6 +148,12 @@ public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
         TestCdcSourceFunction sourceFunction = new TestCdcSourceFunction(events);
         DataStreamSource<TestCdcEvent> source = env.addSource(sourceFunction);
         source.setParallelism(2);
+
+        Options catalogOptions = new Options();
+        catalogOptions.set("warehouse", tempDir.toString());
+        Catalog.Loader catalogLoader =
+                () -> FlinkCatalogFactory.createPaimonCatalog(catalogOptions);
+
         new FlinkCdcSyncDatabaseSinkBuilder<TestCdcEvent>()
                 .withInput(source)
                 .withParserFactory(TestCdcEventParser::new)
@@ -143,6 +161,8 @@ public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
                 // because we have at most 3 tables and 8 slots in AbstractTestBase
                 // each table can only get 2 slots
                 .withParallelism(2)
+                .withDatabase(DATABASE_NAME)
+                .withCatalogLoader(catalogLoader)
                 .build();
 
         // enable failure when running jobs if needed
@@ -177,6 +197,7 @@ public class FlinkCdcSyncDatabaseSinkITCase extends AbstractTestBase {
             throws Exception {
         Options conf = new Options();
         conf.set(CoreOptions.BUCKET, numBucket);
+        conf.set(CoreOptions.DYNAMIC_BUCKET_TARGET_ROW_NUM, 100L);
         conf.set(CoreOptions.WRITE_BUFFER_SIZE, new MemorySize(4096 * 3));
         conf.set(CoreOptions.PAGE_SIZE, new MemorySize(4096));
 

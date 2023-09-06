@@ -21,17 +21,24 @@ package org.apache.paimon;
 import org.apache.paimon.annotation.VisibleForTesting;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.fs.FileIO;
+import org.apache.paimon.index.HashIndexFile;
+import org.apache.paimon.index.IndexFileHandler;
+import org.apache.paimon.manifest.IndexManifestFile;
 import org.apache.paimon.manifest.ManifestFile;
 import org.apache.paimon.manifest.ManifestList;
 import org.apache.paimon.operation.FileStoreCommitImpl;
 import org.apache.paimon.operation.FileStoreExpireImpl;
 import org.apache.paimon.operation.PartitionExpire;
+import org.apache.paimon.operation.SnapshotDeletion;
+import org.apache.paimon.operation.TagDeletion;
 import org.apache.paimon.options.MemorySize;
 import org.apache.paimon.schema.SchemaManager;
+import org.apache.paimon.tag.TagAutoCreation;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.SegmentsCache;
 import org.apache.paimon.utils.SnapshotManager;
+import org.apache.paimon.utils.TagManager;
 
 import javax.annotation.Nullable;
 
@@ -113,6 +120,18 @@ public abstract class AbstractFileStore<T> implements FileStore<T> {
                 forWrite ? writeManifestCache : null);
     }
 
+    protected IndexManifestFile.Factory indexManifestFileFactory() {
+        return new IndexManifestFile.Factory(fileIO, options.manifestFormat(), pathFactory());
+    }
+
+    @Override
+    public IndexFileHandler newIndexFileHandler() {
+        return new IndexFileHandler(
+                snapshotManager(),
+                indexManifestFileFactory().create(),
+                new HashIndexFile(fileIO, pathFactory().indexFileFactory()));
+    }
+
     @Override
     public RowType partitionType() {
         return partitionType;
@@ -121,6 +140,11 @@ public abstract class AbstractFileStore<T> implements FileStore<T> {
     @Override
     public CoreOptions options() {
         return options;
+    }
+
+    @Override
+    public boolean mergeSchema(RowType rowType, boolean allowExplicitCast) {
+        return schemaManager.mergeSchema(rowType, allowExplicitCast);
     }
 
     @Override
@@ -134,9 +158,11 @@ public abstract class AbstractFileStore<T> implements FileStore<T> {
                 snapshotManager(),
                 manifestFileFactory(),
                 manifestListFactory(),
+                indexManifestFileFactory(),
                 newScan(),
                 options.bucket(),
                 options.manifestTargetSize(),
+                options.manifestFullCompactionThresholdSize(),
                 options.manifestMergeMinCount(),
                 partitionType.getFieldCount() > 0 && options.dynamicPartitionOverwrite(),
                 newKeyComparator());
@@ -145,19 +171,43 @@ public abstract class AbstractFileStore<T> implements FileStore<T> {
     @Override
     public FileStoreExpireImpl newExpire() {
         return new FileStoreExpireImpl(
-                fileIO,
                 options.snapshotNumRetainMin(),
                 options.snapshotNumRetainMax(),
                 options.snapshotTimeRetain().toMillis(),
-                pathFactory(),
                 snapshotManager(),
-                manifestFileFactory(),
-                manifestListFactory());
+                newSnapshotDeletion(),
+                newTagManager());
+    }
+
+    @Override
+    public SnapshotDeletion newSnapshotDeletion() {
+        return new SnapshotDeletion(
+                fileIO,
+                pathFactory(),
+                manifestFileFactory().create(),
+                manifestListFactory().create(),
+                newIndexFileHandler());
+    }
+
+    @Override
+    public TagManager newTagManager() {
+        return new TagManager(fileIO, options.path());
+    }
+
+    @Override
+    public TagDeletion newTagDeletion() {
+        return new TagDeletion(
+                fileIO,
+                pathFactory(),
+                manifestFileFactory().create(),
+                manifestListFactory().create(),
+                newIndexFileHandler());
     }
 
     public abstract Comparator<InternalRow> newKeyComparator();
 
     @Override
+    @Nullable
     public PartitionExpire newPartitionExpire(String commitUser) {
         Duration partitionExpireTime = options.partitionExpireTime();
         if (partitionExpireTime == null || partitionType().getFieldCount() == 0) {
@@ -172,5 +222,12 @@ public abstract class AbstractFileStore<T> implements FileStore<T> {
                 options.partitionTimestampFormatter(),
                 newScan(),
                 newCommit(commitUser));
+    }
+
+    @Override
+    @Nullable
+    public TagAutoCreation newTagCreationManager() {
+        return TagAutoCreation.create(
+                options, snapshotManager(), newTagManager(), newTagDeletion());
     }
 }

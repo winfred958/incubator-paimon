@@ -18,19 +18,21 @@
 
 package org.apache.paimon.flink.sink;
 
-import org.apache.paimon.annotation.VisibleForTesting;
-import org.apache.paimon.operation.Lock;
+import org.apache.paimon.flink.sink.index.GlobalDynamicBucketSink;
+import org.apache.paimon.table.AppendOnlyFileStoreTable;
+import org.apache.paimon.table.BucketMode;
 import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSink;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.transformations.PartitionTransformation;
 import org.apache.flink.table.data.RowData;
 
 import javax.annotation.Nullable;
 
 import java.util.Map;
+
+import static org.apache.paimon.flink.sink.FlinkStreamPartitioner.partition;
+import static org.apache.paimon.utils.Preconditions.checkArgument;
 
 /** Builder for {@link FileStoreSink}. */
 public class FlinkSinkBuilder {
@@ -38,12 +40,9 @@ public class FlinkSinkBuilder {
     private final FileStoreTable table;
 
     private DataStream<RowData> input;
-    private Lock.Factory lockFactory = Lock.emptyFactory();
     @Nullable private Map<String, String> overwritePartition;
     @Nullable private LogSinkFunction logSinkFunction;
     @Nullable private Integer parallelism;
-    @Nullable private String commitUser;
-    @Nullable private StoreSinkWrite.Provider sinkProvider;
 
     public FlinkSinkBuilder(FileStoreTable table) {
         this.table = table;
@@ -51,11 +50,6 @@ public class FlinkSinkBuilder {
 
     public FlinkSinkBuilder withInput(DataStream<RowData> input) {
         this.input = input;
-        return this;
-    }
-
-    public FlinkSinkBuilder withLockFactory(Lock.Factory lockFactory) {
-        this.lockFactory = lockFactory;
         return this;
     }
 
@@ -74,29 +68,60 @@ public class FlinkSinkBuilder {
         return this;
     }
 
-    @VisibleForTesting
-    public FlinkSinkBuilder withSinkProvider(
-            String commitUser, StoreSinkWrite.Provider sinkProvider) {
-        this.commitUser = commitUser;
-        this.sinkProvider = sinkProvider;
-        return this;
-    }
-
     public DataStreamSink<?> build() {
-        BucketingStreamPartitioner<RowData> partitioner =
-                new BucketingStreamPartitioner<>(
-                        new RowDataChannelComputer(table.schema(), logSinkFunction != null));
-        PartitionTransformation<RowData> partitioned =
-                new PartitionTransformation<>(input.getTransformation(), partitioner);
-        if (parallelism != null) {
-            partitioned.setParallelism(parallelism);
+        DataStream<RowData> input = this.input;
+        if (table.coreOptions().localMergeEnabled() && table.schema().primaryKeys().size() > 0) {
+            input =
+                    input.forward()
+                            .transform(
+                                    "local merge",
+                                    input.getType(),
+                                    new LocalMergeOperator(table.schema()))
+                            .setParallelism(input.getParallelism());
         }
 
-        StreamExecutionEnvironment env = input.getExecutionEnvironment();
-        FileStoreSink sink =
-                new FileStoreSink(table, lockFactory, overwritePartition, logSinkFunction);
-        return commitUser != null && sinkProvider != null
-                ? sink.sinkFrom(new DataStream<>(env, partitioned), commitUser, sinkProvider)
-                : sink.sinkFrom(new DataStream<>(env, partitioned));
+        BucketMode bucketMode = table.bucketMode();
+        switch (bucketMode) {
+            case FIXED:
+                return buildForFixedBucket(input);
+            case DYNAMIC:
+                return buildDynamicBucketSink(input, false);
+            case GLOBAL_DYNAMIC:
+                return buildDynamicBucketSink(input, true);
+            case UNAWARE:
+                return buildUnawareBucketSink(input);
+            default:
+                throw new UnsupportedOperationException("Unsupported bucket mode: " + bucketMode);
+        }
+    }
+
+    private DataStreamSink<?> buildDynamicBucketSink(
+            DataStream<RowData> input, boolean globalIndex) {
+        checkArgument(logSinkFunction == null, "Dynamic bucket mode can not work with log system.");
+        return globalIndex
+                ? new GlobalDynamicBucketSink(table, overwritePartition).build(input, parallelism)
+                : new RowDynamicBucketSink(table, overwritePartition).build(input, parallelism);
+    }
+
+    private DataStreamSink<?> buildForFixedBucket(DataStream<RowData> input) {
+        DataStream<RowData> partitioned =
+                partition(
+                        input,
+                        new RowDataChannelComputer(table.schema(), logSinkFunction != null),
+                        parallelism);
+        FileStoreSink sink = new FileStoreSink(table, overwritePartition, logSinkFunction);
+        return sink.sinkFrom(partitioned);
+    }
+
+    private DataStreamSink<?> buildUnawareBucketSink(DataStream<RowData> input) {
+        checkArgument(
+                table instanceof AppendOnlyFileStoreTable,
+                "Unaware bucket mode only works with append-only table for now.");
+        return new UnawareBucketWriteSink(
+                        (AppendOnlyFileStoreTable) table,
+                        overwritePartition,
+                        logSinkFunction,
+                        parallelism)
+                .sinkFrom(input);
     }
 }

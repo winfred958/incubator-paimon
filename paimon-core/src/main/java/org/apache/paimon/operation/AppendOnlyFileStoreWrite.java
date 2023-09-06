@@ -32,6 +32,8 @@ import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.io.DataFilePathFactory;
 import org.apache.paimon.io.RowDataRollingFileWriter;
 import org.apache.paimon.reader.RecordReaderIterator;
+import org.apache.paimon.statistics.FieldStatsCollector;
+import org.apache.paimon.table.BucketMode;
 import org.apache.paimon.table.source.DataSplit;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.CommitIncrement;
@@ -39,6 +41,7 @@ import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.LongCounter;
 import org.apache.paimon.utils.RecordWriter;
 import org.apache.paimon.utils.SnapshotManager;
+import org.apache.paimon.utils.StatsCollectorFactories;
 
 import javax.annotation.Nullable;
 
@@ -46,7 +49,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 
-import static org.apache.paimon.CoreOptions.APPEND_ONLY_ASSERT_DISORDER;
 import static org.apache.paimon.io.DataFileMeta.getMaxSequenceNumber;
 
 /** {@link FileStoreWrite} for {@link AppendOnlyFileStore}. */
@@ -62,9 +64,11 @@ public class AppendOnlyFileStoreWrite extends AbstractFileStoreWrite<InternalRow
     private final int compactionMinFileNum;
     private final int compactionMaxFileNum;
     private final boolean commitForceCompact;
-    private final boolean skipCompaction;
-    private final boolean assertDisorder;
     private final String fileCompression;
+    private final FieldStatsCollector.Factory[] statsCollectors;
+
+    private boolean skipCompaction;
+    private BucketMode bucketMode = BucketMode.FIXED;
 
     public AppendOnlyFileStoreWrite(
             FileIO fileIO,
@@ -76,7 +80,7 @@ public class AppendOnlyFileStoreWrite extends AbstractFileStoreWrite<InternalRow
             SnapshotManager snapshotManager,
             FileStoreScan scan,
             CoreOptions options) {
-        super(commitUser, snapshotManager, scan);
+        super(commitUser, snapshotManager, scan, null);
         this.fileIO = fileIO;
         this.read = read;
         this.schemaId = schemaId;
@@ -88,8 +92,9 @@ public class AppendOnlyFileStoreWrite extends AbstractFileStoreWrite<InternalRow
         this.compactionMaxFileNum = options.compactionMaxFileNum();
         this.commitForceCompact = options.commitForceCompact();
         this.skipCompaction = options.writeOnly();
-        this.assertDisorder = options.toConfiguration().get(APPEND_ONLY_ASSERT_DISORDER);
         this.fileCompression = options.fileCompression();
+        this.statsCollectors =
+                StatsCollectorFactories.createStatsFactories(options, rowType.getFieldNames());
     }
 
     @Override
@@ -112,8 +117,7 @@ public class AppendOnlyFileStoreWrite extends AbstractFileStoreWrite<InternalRow
                                 compactionMinFileNum,
                                 compactionMaxFileNum,
                                 targetFileSize,
-                                compactRewriter(partition, bucket),
-                                assertDisorder);
+                                compactRewriter(partition, bucket));
 
         return new AppendOnlyWriter(
                 fileIO,
@@ -126,10 +130,11 @@ public class AppendOnlyFileStoreWrite extends AbstractFileStoreWrite<InternalRow
                 commitForceCompact,
                 factory,
                 restoreIncrement,
-                fileCompression);
+                fileCompression,
+                statsCollectors);
     }
 
-    private AppendOnlyCompactManager.CompactRewriter compactRewriter(
+    public AppendOnlyCompactManager.CompactRewriter compactRewriter(
             BinaryRow partition, int bucket) {
         return toCompact -> {
             if (toCompact.isEmpty()) {
@@ -144,18 +149,35 @@ public class AppendOnlyFileStoreWrite extends AbstractFileStoreWrite<InternalRow
                             rowType,
                             pathFactory.createDataFilePathFactory(partition, bucket),
                             new LongCounter(toCompact.get(0).minSequenceNumber()),
-                            fileCompression);
+                            fileCompression,
+                            statsCollectors);
             rewriter.write(
                     new RecordReaderIterator<>(
                             read.createReader(
-                                    new DataSplit(
-                                            0L /* unused */,
-                                            partition,
-                                            bucket,
-                                            toCompact,
-                                            false))));
+                                    DataSplit.builder()
+                                            .withPartition(partition)
+                                            .withBucket(bucket)
+                                            .withDataFiles(toCompact)
+                                            .build())));
             rewriter.close();
             return rewriter.result();
         };
+    }
+
+    public AppendOnlyFileStoreWrite withBucketMode(BucketMode bucketMode) {
+        // AppendOnlyFileStoreWrite is sensitive with bucket mode. It will act difference in
+        // unaware-bucket mode (no compaction and force empty-writer).
+        this.bucketMode = bucketMode;
+        if (bucketMode == BucketMode.UNAWARE) {
+            super.withIgnorePreviousFiles(true);
+            skipCompaction = true;
+        }
+        return this;
+    }
+
+    @Override
+    public void withIgnorePreviousFiles(boolean ignorePrevious) {
+        // in unaware bucket mode, we need all writers to be empty
+        super.withIgnorePreviousFiles(ignorePrevious || bucketMode == BucketMode.UNAWARE);
     }
 }

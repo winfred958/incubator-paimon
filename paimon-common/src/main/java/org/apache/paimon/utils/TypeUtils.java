@@ -21,24 +21,22 @@ package org.apache.paimon.utils;
 import org.apache.paimon.data.BinaryString;
 import org.apache.paimon.data.Decimal;
 import org.apache.paimon.data.GenericArray;
-import org.apache.paimon.data.Timestamp;
 import org.apache.paimon.types.ArrayType;
 import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypeChecks;
 import org.apache.paimon.types.DataTypeRoot;
 import org.apache.paimon.types.DecimalType;
-import org.apache.paimon.types.LocalZonedTimestampType;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.types.TimestampType;
 import org.apache.paimon.types.VarCharType;
 
 import java.math.BigDecimal;
-import java.time.DateTimeException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static org.apache.paimon.types.DataTypeChecks.getNestedTypes;
 import static org.apache.paimon.types.DataTypeFamily.BINARY_STRING;
@@ -47,16 +45,6 @@ import static org.apache.paimon.types.DataTypeFamily.CHARACTER_STRING;
 /** Type related helper functions. */
 public class TypeUtils {
 
-    private static final List<BinaryString> TRUE_STRINGS =
-            Stream.of("t", "true", "y", "yes", "1")
-                    .map(BinaryString::fromString)
-                    .collect(Collectors.toList());
-
-    private static final List<BinaryString> FALSE_STRINGS =
-            Stream.of("f", "false", "n", "no", "0")
-                    .map(BinaryString::fromString)
-                    .collect(Collectors.toList());
-
     public static RowType project(RowType inputType, int[] mapping) {
         List<DataField> fields = inputType.getFields();
         return new RowType(
@@ -64,12 +52,20 @@ public class TypeUtils {
     }
 
     public static Object castFromString(String s, DataType type) {
+        return castFromStringInternal(s, type, false);
+    }
+
+    public static Object castFromCdcValueString(String s, DataType type) {
+        return castFromStringInternal(s, type, true);
+    }
+
+    private static Object castFromStringInternal(String s, DataType type, boolean isCdcValue) {
         BinaryString str = BinaryString.fromString(s);
         switch (type.getTypeRoot()) {
             case CHAR:
             case VARCHAR:
                 int stringLength = DataTypeChecks.getLength(type);
-                if (s.length() > stringLength) {
+                if (stringLength != VarCharType.MAX_LENGTH && str.numChars() > stringLength) {
                     throw new IllegalArgumentException(
                             String.format(
                                     "Length of type %s is %d, but casting result has a length of %d",
@@ -77,11 +73,14 @@ public class TypeUtils {
                 }
                 return str;
             case BOOLEAN:
-                return toBoolean(str);
+                return BinaryStringUtils.toBoolean(str);
             case BINARY:
+                return isCdcValue
+                        ? Base64.getDecoder().decode(s)
+                        : s.getBytes(StandardCharsets.UTF_8);
             case VARBINARY:
                 int binaryLength = DataTypeChecks.getLength(type);
-                byte[] bytes = s.getBytes();
+                byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
                 if (bytes.length > binaryLength) {
                     throw new IllegalArgumentException(
                             String.format(
@@ -106,18 +105,24 @@ public class TypeUtils {
                 if (d == ((float) d)) {
                     return (float) d;
                 } else {
-                    throw new NumberFormatException(
-                            s + " cannot be cast to float due to precision loss");
+                    // Compatible canal-cdc
+                    Float f = Float.valueOf(s);
+                    if (f.toString().length() != s.length()) {
+                        throw new NumberFormatException(
+                                s + " cannot be cast to float due to precision loss");
+                    } else {
+                        return f;
+                    }
                 }
             case DOUBLE:
                 return Double.valueOf(s);
             case DATE:
-                return toDate(str);
+                return BinaryStringUtils.toDate(str);
             case TIME_WITHOUT_TIME_ZONE:
-                return toTime(str);
+                return BinaryStringUtils.toTime(str);
             case TIMESTAMP_WITHOUT_TIME_ZONE:
                 TimestampType timestampType = (TimestampType) type;
-                return toTimestamp(str, timestampType.getPrecision());
+                return BinaryStringUtils.toTimestamp(str, timestampType.getPrecision());
             case ARRAY:
                 ArrayType arrayType = (ArrayType) type;
                 DataType elementType = arrayType.getElementType();
@@ -140,52 +145,6 @@ public class TypeUtils {
             default:
                 throw new UnsupportedOperationException("Unsupported type " + type);
         }
-    }
-
-    public static int timestampPrecision(DataType type) {
-        if (type instanceof TimestampType) {
-            return ((TimestampType) type).getPrecision();
-        } else if (type instanceof LocalZonedTimestampType) {
-            return ((LocalZonedTimestampType) type).getPrecision();
-        }
-
-        throw new UnsupportedOperationException("Unsupported type: " + type);
-    }
-
-    /** Parse a {@link BinaryString} to boolean. */
-    public static boolean toBoolean(BinaryString str) {
-        BinaryString lowerCase = str.toLowerCase();
-        if (TRUE_STRINGS.contains(lowerCase)) {
-            return true;
-        }
-        if (FALSE_STRINGS.contains(lowerCase)) {
-            return false;
-        }
-        throw new RuntimeException("Cannot parse '" + str + "' as BOOLEAN.");
-    }
-
-    public static int toDate(BinaryString input) throws DateTimeException {
-        Integer date = DateTimeUtils.parseDate(input.toString());
-        if (date == null) {
-            throw new DateTimeException("For input string: '" + input + "'.");
-        }
-
-        return date;
-    }
-
-    public static int toTime(BinaryString input) throws DateTimeException {
-        Integer date = DateTimeUtils.parseTime(input.toString());
-        if (date == null) {
-            throw new DateTimeException("For input string: '" + input + "'.");
-        }
-
-        return date;
-    }
-
-    /** Used by {@code CAST(x as TIMESTAMP)}. */
-    public static Timestamp toTimestamp(BinaryString input, int precision)
-            throws DateTimeException {
-        return DateTimeUtils.parseTimestampData(input.toString(), precision);
     }
 
     public static boolean isPrimitive(DataType type) {

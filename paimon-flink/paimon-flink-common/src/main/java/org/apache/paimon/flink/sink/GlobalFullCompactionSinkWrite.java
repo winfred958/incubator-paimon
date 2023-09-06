@@ -21,6 +21,7 @@ package org.apache.paimon.flink.sink;
 import org.apache.paimon.Snapshot;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.memory.MemorySegmentPool;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.sink.SinkRecord;
 import org.apache.paimon.utils.SnapshotManager;
@@ -29,6 +30,8 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -66,10 +69,20 @@ public class GlobalFullCompactionSinkWrite extends StoreSinkWriteImpl {
             String commitUser,
             StoreSinkWriteState state,
             IOManager ioManager,
-            boolean isOverwrite,
+            boolean ignorePreviousFiles,
             boolean waitCompaction,
-            int deltaCommits) {
-        super(table, commitUser, state, ioManager, isOverwrite, waitCompaction);
+            int deltaCommits,
+            boolean isStreaming,
+            @Nullable MemorySegmentPool memoryPool) {
+        super(
+                table,
+                commitUser,
+                state,
+                ioManager,
+                ignorePreviousFiles,
+                waitCompaction,
+                isStreaming,
+                memoryPool);
 
         this.deltaCommits = deltaCommits;
 
@@ -117,7 +130,7 @@ public class GlobalFullCompactionSinkWrite extends StoreSinkWriteImpl {
     }
 
     @Override
-    public List<Committable> prepareCommit(boolean doCompaction, long checkpointId)
+    public List<Committable> prepareCommit(boolean waitCompaction, long checkpointId)
             throws IOException {
         checkSuccessfulFullCompaction();
 
@@ -141,10 +154,10 @@ public class GlobalFullCompactionSinkWrite extends StoreSinkWriteImpl {
         }
 
         if (!writtenBuckets.isEmpty() && isFullCompactedIdentifier(checkpointId, deltaCommits)) {
-            doCompaction = true;
+            waitCompaction = true;
         }
 
-        if (doCompaction) {
+        if (waitCompaction) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Submit full compaction for checkpoint #{}", checkpointId);
             }
@@ -152,48 +165,43 @@ public class GlobalFullCompactionSinkWrite extends StoreSinkWriteImpl {
             commitIdentifiersToCheck.add(checkpointId);
         }
 
-        return super.prepareCommit(doCompaction, checkpointId);
+        return super.prepareCommit(waitCompaction, checkpointId);
     }
 
     private void checkSuccessfulFullCompaction() {
-        Long latestId = snapshotManager.latestSnapshotId();
-        if (latestId == null) {
-            return;
-        }
-        Long earliestId = snapshotManager.earliestSnapshotId();
-        if (earliestId == null) {
+        if (commitIdentifiersToCheck.isEmpty()) {
             return;
         }
 
-        for (long id = latestId; id >= earliestId; id--) {
-            Snapshot snapshot = snapshotManager.snapshot(id);
-            if (snapshot.commitUser().equals(commitUser)
-                    && snapshot.commitKind() == Snapshot.CommitKind.COMPACT) {
-                long commitIdentifier = snapshot.commitIdentifier();
-                if (commitIdentifiersToCheck.contains(commitIdentifier)) {
-                    // We found a full compaction snapshot triggered by `submitFullCompaction`
-                    // method.
-                    //
-                    // Because `submitFullCompaction` will compact all buckets in `writtenBuckets`,
-                    // thus a successful commit indicates that all previous buckets have been
-                    // compacted.
-                    //
-                    // We must make sure that the compact snapshot is triggered by
-                    // `submitFullCompaction`, because normal compaction may also trigger full
-                    // compaction, but that only compacts a specific bucket, not all buckets
-                    // recorded in `writtenBuckets`.
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug(
-                                "Found full compaction snapshot #{} with identifier {}",
-                                id,
-                                commitIdentifier);
-                    }
-                    writtenBuckets.headMap(commitIdentifier, true).clear();
-                    commitIdentifiersToCheck.headSet(commitIdentifier).clear();
-                    break;
+        snapshotManager.traversalSnapshotsFromLatestSafely(this::checkSuccessfulFullCompaction);
+    }
+
+    private boolean checkSuccessfulFullCompaction(Snapshot snapshot) {
+        if (snapshot.commitUser().equals(commitUser)
+                && snapshot.commitKind() == Snapshot.CommitKind.COMPACT) {
+            long commitIdentifier = snapshot.commitIdentifier();
+            if (commitIdentifiersToCheck.contains(commitIdentifier)) {
+                // We found a full compaction snapshot triggered by `submitFullCompaction` method.
+                //
+                // Because `submitFullCompaction` will compact all buckets in `writtenBuckets`, thus
+                // a successful commit indicates that all previous buckets have been compacted.
+                //
+                // We must make sure that the compact snapshot is triggered by
+                // `submitFullCompaction`, because normal compaction may also trigger full
+                // compaction, but that only compacts a specific bucket, not all buckets recorded in
+                // `writtenBuckets`.
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug(
+                            "Found full compaction snapshot #{} with identifier {}",
+                            snapshot.id(),
+                            commitIdentifier);
                 }
+                writtenBuckets.headMap(commitIdentifier, true).clear();
+                commitIdentifiersToCheck.headSet(commitIdentifier).clear();
+                return true;
             }
         }
+        return false;
     }
 
     private void submitFullCompaction(long currentCheckpointId) {

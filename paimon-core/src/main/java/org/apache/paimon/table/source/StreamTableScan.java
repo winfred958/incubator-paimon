@@ -33,9 +33,15 @@ import javax.annotation.Nullable;
 @Public
 public interface StreamTableScan extends TableScan, Restorable<Long> {
 
+    @Override
+    RichPlan plan();
+
     /** Restore from checkpoint next snapshot id. */
     @Override
     void restore(@Nullable Long nextSnapshotId);
+
+    /** Restore from checkpoint next snapshot id with scan kind. */
+    void restore(@Nullable Long nextSnapshotId, ScanMode scanMode);
 
     /** Checkpoint to return next snapshot id. */
     @Nullable

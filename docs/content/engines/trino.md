@@ -38,27 +38,29 @@ Paimon currently supports Trino 358 and above.
 
 Download the jar file with corresponding version.
 
-| Version       | Jar                                                                                                                                                                     |
-|---------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [358, 368)    | [paimon-trino-358-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-358/{{< version >}}/paimon-trino-358-{{< version >}}.jar)    |
-| [368, 369)    | [paimon-trino-368-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-368/{{< version >}}/paimon-trino-368-{{< version >}}.jar)    |
-| [369, 370)    | [paimon-trino-369-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-369/{{< version >}}/paimon-trino-369-{{< version >}}.jar)    |
-| [370, 388)    | [paimon-trino-370-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-370/{{< version >}}/paimon-trino-370-{{< version >}}.jar)    |
-| [388, 393)    | [paimon-trino-388-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-388/{{< version >}}/paimon-trino-388-{{< version >}}.jar)    |
-| [393, latest] | [paimon-trino-393-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-393/{{< version >}}/paimon-trino-393-{{< version >}}.jar)    |
+| Version       | Jar                                                                                                                                                                  |
+|---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [358, 368)    | [paimon-trino-358-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-358/{{< version >}}/paimon-trino-358-{{< version >}}.jar) |
+| [368, 369)    | [paimon-trino-368-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-368/{{< version >}}/paimon-trino-368-{{< version >}}.jar) |
+| [369, 370)    | [paimon-trino-369-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-369/{{< version >}}/paimon-trino-369-{{< version >}}.jar) |
+| [370, 388)    | [paimon-trino-370-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-370/{{< version >}}/paimon-trino-370-{{< version >}}.jar) |
+| [388, 393)    | [paimon-trino-388-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-388/{{< version >}}/paimon-trino-388-{{< version >}}.jar) |
+| [393, 422]    | [paimon-trino-393-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-393/{{< version >}}/paimon-trino-393-{{< version >}}.jar) |
+| [422, latest] | [paimon-trino-422-{{< version >}}.jar](https://repo.maven.apache.org/maven2/org/apache/paimon/paimon-trino-422/{{< version >}}/paimon-trino-422-{{< version >}}.jar) |
 
 {{< /stable >}}
 
 {{< unstable >}}
 
-| Version       | Jar                                                                                                                                 |
-|---------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| [358, 368)    | [paimon-trino-358-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-358/{{< version >}}/) |
-| [368, 369)    | [paimon-trino-368-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-368/{{< version >}}/) |
-| [369, 370)    | [paimon-trino-369-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-369/{{< version >}}/) |
-| [370, 388)    | [paimon-trino-370-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-370/{{< version >}}/) |
-| [388, 393)    | [paimon-trino-388-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-388/{{< version >}}/) |
-| [393, latest] | [paimon-trino-393-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-393/{{< version >}}/) |
+| Version    | Jar                                                                                                                                 |
+|------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| [358, 368) | [paimon-trino-358-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-358/{{< version >}}/) |
+| [368, 369) | [paimon-trino-368-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-368/{{< version >}}/) |
+| [369, 370) | [paimon-trino-369-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-369/{{< version >}}/) |
+| [370, 388) | [paimon-trino-370-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-370/{{< version >}}/) |
+| [388, 393) | [paimon-trino-388-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-388/{{< version >}}/) |
+| [393, 422] | [paimon-trino-393-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-393/{{< version >}}/) |
+| [422, latest] | [paimon-trino-422-{{< version >}}.jar](https://repository.apache.org/snapshots/org/apache/paimon/paimon-trino-422/{{< version >}}/) |
 
 {{< /unstable >}}
 
@@ -95,6 +97,18 @@ Then, copy `paimon-trino-*.jar and flink-shaded-hadoop-*-uber-*.jar` to plugin/p
 
 > NOTE: For JDK 17, when Deploying Trino, should add jvm options: `--add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED`
 
+## Tmp Dir
+
+Paimon will unzip some jars to the tmp directory for codegen. By default, Trino will use `'/tmp'` as the temporary
+directory, but `'/tmp'` may be periodically deleted.
+
+You can configure this environment variable when Trino starts: 
+```shell
+-Djava.io.tmpdir=/path/to/other/tmpdir
+```
+
+Let Paimon use a secure temporary directory.
+
 ## Configure Paimon Catalog
 
 Catalogs are registered by creating a catalog properties file in the etc/catalog directory. For example, create etc/catalog/paimon.properties with the following contents to mount the paimon connector as the paimon catalog:
@@ -112,7 +126,7 @@ If you are using HDFS, choose one of the following ways to configure your HDFS:
 
 ## Kerberos
 
-You can configure kerberos keytag file when using KERBEROS authentication in the properties.
+You can configure kerberos keytab file when using KERBEROS authentication in the properties.
 
 ```
 security.kerberos.login.principal=hadoop-user
@@ -139,7 +153,7 @@ CREATE TABLE paimon.test_db.orders (
 WITH (
     file_format = 'ORC',
     primary_key = ARRAY['order_key','order_date'],
-    partitioned_by = ARRAY['orderdate'],
+    partitioned_by = ARRAY['order_date'],
     bucket = '2',
     bucket_key = 'order_key',
     changelog_producer = 'input'
@@ -158,13 +172,13 @@ CREATE TABLE paimon.test_db.orders (
 WITH (
     file_format = 'ORC',
     primary_key = ARRAY['order_key','order_date'],
-    partitioned_by = ARRAY['orderdate'],
+    partitioned_by = ARRAY['order_date'],
     bucket = '2',
     bucket_key = 'order_key',
     changelog_producer = 'input'
 )
 
-ALTER TABLE paimon.test_db.orders ADD COLUMN "shipping_address varchar;
+ALTER TABLE paimon.test_db.orders ADD COLUMN shipping_address varchar;
 ```
 
 ## Query

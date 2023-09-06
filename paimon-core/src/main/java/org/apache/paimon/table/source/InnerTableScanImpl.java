@@ -19,8 +19,9 @@
 package org.apache.paimon.table.source;
 
 import org.apache.paimon.CoreOptions;
+import org.apache.paimon.operation.DefaultValueAssigner;
 import org.apache.paimon.predicate.Predicate;
-import org.apache.paimon.table.source.snapshot.SnapshotSplitReader;
+import org.apache.paimon.table.source.snapshot.SnapshotReader;
 import org.apache.paimon.table.source.snapshot.StartingScanner;
 import org.apache.paimon.utils.SnapshotManager;
 
@@ -28,36 +29,37 @@ import org.apache.paimon.utils.SnapshotManager;
 public class InnerTableScanImpl extends AbstractInnerTableScan {
 
     private final SnapshotManager snapshotManager;
+    private final DefaultValueAssigner defaultValueAssigner;
 
     private StartingScanner startingScanner;
-
     private boolean hasNext;
 
     public InnerTableScanImpl(
             CoreOptions options,
-            SnapshotSplitReader snapshotSplitReader,
-            SnapshotManager snapshotManager) {
-        super(options, snapshotSplitReader);
+            SnapshotReader snapshotReader,
+            SnapshotManager snapshotManager,
+            DefaultValueAssigner defaultValueAssigner) {
+        super(options, snapshotReader);
         this.snapshotManager = snapshotManager;
         this.hasNext = true;
+        this.defaultValueAssigner = defaultValueAssigner;
     }
 
     @Override
     public InnerTableScan withFilter(Predicate predicate) {
-        snapshotSplitReader.withFilter(predicate);
+        snapshotReader.withFilter(defaultValueAssigner.handlePredicate(predicate));
         return this;
     }
 
     @Override
-    public DataFilePlan plan() {
+    public TableScan.Plan plan() {
         if (startingScanner == null) {
             startingScanner = createStartingScanner(false);
         }
 
         if (hasNext) {
             hasNext = false;
-            StartingScanner.Result result =
-                    startingScanner.scan(snapshotManager, snapshotSplitReader);
+            StartingScanner.Result result = startingScanner.scan(snapshotManager, snapshotReader);
             return DataFilePlan.fromResult(result);
         } else {
             throw new EndOfScanException();

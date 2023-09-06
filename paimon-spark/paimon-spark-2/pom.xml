@@ -25,7 +25,7 @@ under the License.
     <parent>
         <groupId>org.apache.paimon</groupId>
         <artifactId>paimon-spark</artifactId>
-        <version>0.5-SNAPSHOT</version>
+        <version>0.6-SNAPSHOT</version>
     </parent>
 
     <artifactId>paimon-spark-2</artifactId>
@@ -79,6 +79,10 @@ under the License.
                 <exclusion>
                     <groupId>org.apache.xbean</groupId>
                     <artifactId>xbean-asm6-shaded</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.glassfish.jersey.media</groupId>
+                    <artifactId>jersey-media-json-jackson</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>

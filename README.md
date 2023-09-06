@@ -2,11 +2,10 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202-4EB1BA.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
 [![Get on Slack](https://img.shields.io/badge/slack-join-orange.svg)](https://the-asf.slack.com/archives/C053Q2NCW8G)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=apache_incubator-paimon&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=apache_incubator-paimon)
 
 Paimon is a streaming data lake platform that supports high-speed data ingestion, change data tracking and efficient real-time analytics.
 
-Background and documentation is available at https://paimon.apache.org
+Background and documentation are available at https://paimon.apache.org
 
 `Paimon`'s former name was `Flink Table Store`, developed from the Flink community. The architecture refers to some design concepts of Iceberg.
 Thanks to Apache Flink and Apache Iceberg.
@@ -74,8 +73,6 @@ JDK 8/11 is required for building the project.
 - Run the `mvn clean install -DskipTests` command to build the project.
 - Run the `mvn spotless:apply` to format the project (both Java and Scala).
 - IDE: Mark `paimon-common/target/generated-sources/antlr4` as Sources Root.
-
-If you fail to download paimon-bundle snapshot files during the build, it is likely that your maven settings file does not include a snapshot repository. Uncomment the "repositories" tag in [pom.xml](pom.xml) file for a workaround.
 
 ## How to Contribute
 

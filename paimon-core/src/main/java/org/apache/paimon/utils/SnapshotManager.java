@@ -19,19 +19,25 @@
 package org.apache.paimon.utils;
 
 import org.apache.paimon.Snapshot;
-import org.apache.paimon.Snapshot.CommitKind;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BinaryOperator;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import static org.apache.paimon.utils.FileUtils.listVersionedFiles;
@@ -99,6 +105,11 @@ public class SnapshotManager implements Serializable {
         }
     }
 
+    public @Nullable Snapshot earliestSnapshot() {
+        Long snapshotId = earliestSnapshotId();
+        return snapshotId == null ? null : snapshot(snapshotId);
+    }
+
     public @Nullable Long earliestSnapshotId() {
         try {
             return findEarliest();
@@ -107,11 +118,7 @@ public class SnapshotManager implements Serializable {
         }
     }
 
-    public @Nullable Long latestCompactedSnapshotId() {
-        return pickFromLatest(s -> s.commitKind() == CommitKind.COMPACT);
-    }
-
-    public @Nullable Long pickFromLatest(Predicate<Snapshot> predicate) {
+    public @Nullable Long pickOrLatest(Predicate<Snapshot> predicate) {
         Long latestId = latestSnapshotId();
         Long earliestId = earliestSnapshotId();
         if (latestId == null || earliestId == null) {
@@ -127,7 +134,7 @@ public class SnapshotManager implements Serializable {
             }
         }
 
-        return null;
+        return latestId;
     }
 
     /**
@@ -161,14 +168,25 @@ public class SnapshotManager implements Serializable {
             return null;
         }
 
-        for (long i = latest; i >= earliest; i--) {
-            Snapshot snapshot = snapshot(i);
+        if (snapshot(earliest).timeMillis() > timestampMills) {
+            return null;
+        }
+        Snapshot finnalSnapshot = null;
+        while (earliest <= latest) {
+            long mid = earliest + (latest - earliest) / 2; // Avoid overflow
+            Snapshot snapshot = snapshot(mid);
             long commitTime = snapshot.timeMillis();
-            if (commitTime <= timestampMills) {
-                return snapshot;
+            if (commitTime > timestampMills) {
+                latest = mid - 1; // Search in the left half
+            } else if (commitTime < timestampMills) {
+                earliest = mid + 1; // Search in the right half
+                finnalSnapshot = snapshot;
+            } else {
+                finnalSnapshot = snapshot; // Found the exact match
+                break;
             }
         }
-        return null;
+        return finnalSnapshot;
     }
 
     public long snapshotCount() throws IOException {
@@ -200,6 +218,79 @@ public class SnapshotManager implements Serializable {
             }
         }
         return Optional.empty();
+    }
+
+    /** Find the snapshot of the specified identifiers written by the specified user. */
+    public List<Snapshot> findSnapshotsForIdentifiers(
+            @Nonnull String user, List<Long> identifiers) {
+        if (identifiers.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Long latestId = latestSnapshotId();
+        if (latestId == null) {
+            return Collections.emptyList();
+        }
+        long earliestId =
+                Preconditions.checkNotNull(
+                        earliestSnapshotId(),
+                        "Latest snapshot id is not null, but earliest snapshot id is null. "
+                                + "This is unexpected.");
+
+        long minSearchedIdentifier = identifiers.stream().min(Long::compareTo).get();
+        List<Snapshot> matchedSnapshots = new ArrayList<>();
+        Set<Long> remainingIdentifiers = new HashSet<>(identifiers);
+        for (long id = latestId; id >= earliestId && !remainingIdentifiers.isEmpty(); id--) {
+            Snapshot snapshot = snapshot(id);
+            if (user.equals(snapshot.commitUser())) {
+                if (remainingIdentifiers.remove(snapshot.commitIdentifier())) {
+                    matchedSnapshots.add(snapshot);
+                }
+                if (snapshot.commitIdentifier() <= minSearchedIdentifier) {
+                    break;
+                }
+            }
+        }
+        return matchedSnapshots;
+    }
+
+    /**
+     * Traversal snapshots from latest to earliest safely, this is applied on the writer side
+     * because the committer may delete obsolete snapshots, which may cause the writer to encounter
+     * unreadable snapshots.
+     */
+    public void traversalSnapshotsFromLatestSafely(Function<Snapshot, Boolean> consumer) {
+        Long latestId = latestSnapshotId();
+        if (latestId == null) {
+            return;
+        }
+        Long earliestId = earliestSnapshotId();
+        if (earliestId == null) {
+            return;
+        }
+
+        for (long id = latestId; id >= earliestId; id--) {
+            Snapshot snapshot;
+            try {
+                snapshot = snapshot(id);
+            } catch (Exception e) {
+                Long newEarliestId = earliestSnapshotId();
+                if (newEarliestId == null) {
+                    return;
+                }
+
+                // this is a valid snapshot, should not throw exception
+                if (id >= newEarliestId) {
+                    throw e;
+                }
+
+                // ok, this is an expired snapshot
+                return;
+            }
+
+            if (consumer.apply(snapshot)) {
+                return;
+            }
+        }
     }
 
     private @Nullable Long findLatest() throws IOException {

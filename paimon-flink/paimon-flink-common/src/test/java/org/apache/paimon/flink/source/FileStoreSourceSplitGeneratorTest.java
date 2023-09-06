@@ -25,7 +25,9 @@ import org.apache.paimon.operation.FileStoreScan;
 import org.apache.paimon.stats.StatsTestUtils;
 import org.apache.paimon.table.source.DataFilePlan;
 import org.apache.paimon.table.source.DataSplit;
-import org.apache.paimon.table.source.snapshot.SnapshotSplitReaderImpl;
+import org.apache.paimon.table.source.ScanMode;
+import org.apache.paimon.table.source.SplitGenerator;
+import org.apache.paimon.table.source.snapshot.SnapshotReaderImpl;
 
 import org.junit.jupiter.api.Test;
 
@@ -47,10 +49,20 @@ public class FileStoreSourceSplitGeneratorTest {
     public void test() {
         FileStoreScan.Plan plan =
                 new FileStoreScan.Plan() {
+                    @Override
+                    public Long watermark() {
+                        return null;
+                    }
+
                     @Nullable
                     @Override
                     public Long snapshotId() {
                         return 1L;
+                    }
+
+                    @Override
+                    public ScanMode scanMode() {
+                        return ScanMode.ALL;
                     }
 
                     @Override
@@ -74,11 +86,22 @@ public class FileStoreSourceSplitGeneratorTest {
                     }
                 };
         List<DataSplit> scanSplits =
-                SnapshotSplitReaderImpl.generateSplits(
+                SnapshotReaderImpl.generateSplits(
                         1L,
                         false,
-                        false,
-                        Collections::singletonList,
+                        new SplitGenerator() {
+                            @Override
+                            public List<List<DataFileMeta>> splitForBatch(
+                                    List<DataFileMeta> files) {
+                                return Collections.singletonList(files);
+                            }
+
+                            @Override
+                            public List<List<DataFileMeta>> splitForStreaming(
+                                    List<DataFileMeta> files) {
+                                return null;
+                            }
+                        },
                         FileStoreScan.Plan.groupByPartFiles(plan.files(FileKind.ADD)));
         DataFilePlan tableScanPlan = new DataFilePlan(scanSplits);
 
@@ -116,7 +139,7 @@ public class FileStoreSourceSplitGeneratorTest {
         assertThat(((DataSplit) split.split()).bucket()).isEqualTo(bucket);
         assertThat(
                         ((DataSplit) split.split())
-                                .files().stream()
+                                .dataFiles().stream()
                                         .map(DataFileMeta::fileName)
                                         .collect(Collectors.toList()))
                 .isEqualTo(files);

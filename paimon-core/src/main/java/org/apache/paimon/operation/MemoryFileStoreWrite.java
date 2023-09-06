@@ -19,11 +19,11 @@
 package org.apache.paimon.operation;
 
 import org.apache.paimon.CoreOptions;
+import org.apache.paimon.index.IndexMaintainer;
 import org.apache.paimon.io.cache.CacheManager;
 import org.apache.paimon.memory.HeapMemorySegmentPool;
 import org.apache.paimon.memory.MemoryOwner;
 import org.apache.paimon.memory.MemoryPoolFactory;
-import org.apache.paimon.memory.MemorySegmentPool;
 import org.apache.paimon.utils.RecordWriter;
 import org.apache.paimon.utils.SnapshotManager;
 
@@ -31,6 +31,8 @@ import org.apache.paimon.shade.guava30.com.google.common.collect.Iterators;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -54,8 +56,9 @@ public abstract class MemoryFileStoreWrite<T> extends AbstractFileStoreWrite<T> 
             String commitUser,
             SnapshotManager snapshotManager,
             FileStoreScan scan,
-            CoreOptions options) {
-        super(commitUser, snapshotManager, scan);
+            CoreOptions options,
+            @Nullable IndexMaintainer.Factory<T> indexFactory) {
+        super(commitUser, snapshotManager, scan, indexFactory);
         this.options = options;
         this.cacheManager =
                 new CacheManager(
@@ -64,8 +67,8 @@ public abstract class MemoryFileStoreWrite<T> extends AbstractFileStoreWrite<T> 
     }
 
     @Override
-    public MemoryFileStoreWrite<T> withMemoryPool(MemorySegmentPool memoryPool) {
-        this.writeBufferPool = new MemoryPoolFactory(memoryPool, this::memoryOwners);
+    public FileStoreWrite<T> withMemoryPoolFactory(MemoryPoolFactory memoryPoolFactory) {
+        this.writeBufferPool = memoryPoolFactory.addOwners(this::memoryOwners);
         return this;
     }
 
@@ -102,9 +105,9 @@ public abstract class MemoryFileStoreWrite<T> extends AbstractFileStoreWrite<T> 
             LOG.debug("Use default heap memory segment pool for write buffer.");
             writeBufferPool =
                     new MemoryPoolFactory(
-                            new HeapMemorySegmentPool(
-                                    options.writeBufferSize(), options.pageSize()),
-                            this::memoryOwners);
+                                    new HeapMemorySegmentPool(
+                                            options.writeBufferSize(), options.pageSize()))
+                            .addOwners(this::memoryOwners);
         }
         writeBufferPool.notifyNewOwner((MemoryOwner) writer);
     }

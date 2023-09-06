@@ -18,47 +18,35 @@
 
 package org.apache.paimon.flink.action.cdc.mysql;
 
-import org.apache.paimon.flink.action.ActionITCaseBase;
-import org.apache.paimon.table.FileStoreTable;
-import org.apache.paimon.table.source.ReadBuilder;
-import org.apache.paimon.table.source.TableScan;
-import org.apache.paimon.types.DataField;
-import org.apache.paimon.types.RowType;
+import org.apache.paimon.flink.action.cdc.CdcActionITCaseBase;
 
-import org.apache.flink.api.common.JobStatus;
-import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.api.java.utils.MultipleParameterTool;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.lifecycle.Startables;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 /** Base test class for {@link org.apache.paimon.flink.action.Action}s related to MySQL. */
-public class MySqlActionITCaseBase extends ActionITCaseBase {
+public class MySqlActionITCaseBase extends CdcActionITCaseBase {
 
     private static final Logger LOG = LoggerFactory.getLogger(MySqlActionITCaseBase.class);
 
     protected static final MySqlContainer MYSQL_CONTAINER = createMySqlContainer(MySqlVersion.V5_7);
     private static final String USER = "paimonuser";
     private static final String PASSWORD = "paimonpw";
-
-    @BeforeAll
-    public static void startContainers() {
-        LOG.info("Starting containers...");
-        Startables.deepStart(Stream.of(MYSQL_CONTAINER)).join();
-        LOG.info("Containers are started.");
-    }
 
     @AfterAll
     public static void stopContainers() {
@@ -71,56 +59,25 @@ public class MySqlActionITCaseBase extends ActionITCaseBase {
         return (MySqlContainer)
                 new MySqlContainer(version)
                         .withConfigurationOverride("mysql/my.cnf")
-                        .withSetupSQL("mysql/setup.sql")
                         .withUsername(USER)
                         .withPassword(PASSWORD)
                         .withEnv("TZ", "America/Los_Angeles")
                         .withLogConsumer(new Slf4jLogConsumer(LOG));
     }
 
-    protected void waitForResult(
-            List<String> expected, FileStoreTable table, RowType rowType, List<String> primaryKeys)
-            throws Exception {
-        assertThat(table.schema().primaryKeys()).isEqualTo(primaryKeys);
+    protected static void start() {
+        LOG.info("Starting containers...");
+        Startables.deepStart(Stream.of(MYSQL_CONTAINER)).join();
+        LOG.info("Containers are started.");
+    }
 
-        // wait for table schema to become our expected schema
-        while (true) {
-            if (rowType.getFieldCount() == table.schema().fields().size()) {
-                int cnt = 0;
-                for (int i = 0; i < table.schema().fields().size(); i++) {
-                    DataField field = table.schema().fields().get(i);
-                    boolean sameName = field.name().equals(rowType.getFieldNames().get(i));
-                    boolean sameType = field.type().equals(rowType.getFieldTypes().get(i));
-                    if (sameName && sameType) {
-                        cnt++;
-                    }
-                }
-                if (cnt == rowType.getFieldCount()) {
-                    break;
-                }
-            }
-            table = table.copyWithLatestSchema();
-            Thread.sleep(1000);
-        }
-
-        // wait for data to become expected
-        List<String> sortedExpected = new ArrayList<>(expected);
-        Collections.sort(sortedExpected);
-        while (true) {
-            ReadBuilder readBuilder = table.newReadBuilder();
-            TableScan.Plan plan = readBuilder.newScan().plan();
-            List<String> result =
-                    getResult(
-                            readBuilder.newRead(),
-                            plan == null ? Collections.emptyList() : plan.splits(),
-                            rowType);
-            List<String> sortedActual = new ArrayList<>(result);
-            Collections.sort(sortedActual);
-            if (sortedExpected.equals(sortedActual)) {
-                break;
-            }
-            Thread.sleep(1000);
-        }
+    protected Statement getStatement() throws SQLException {
+        Connection conn =
+                DriverManager.getConnection(
+                        MYSQL_CONTAINER.getJdbcUrl(),
+                        MYSQL_CONTAINER.getUsername(),
+                        MYSQL_CONTAINER.getPassword());
+        return conn.createStatement();
     }
 
     protected Map<String, String> getBasicMySqlConfig() {
@@ -134,13 +91,86 @@ public class MySqlActionITCaseBase extends ActionITCaseBase {
         return config;
     }
 
-    protected void waitJobRunning(JobClient client) throws Exception {
-        while (true) {
-            JobStatus status = client.getJobStatus().get();
-            if (status == JobStatus.RUNNING) {
-                break;
-            }
-            Thread.sleep(1000);
+    protected MySqlSyncTableActionBuilder syncTableActionBuilder(Map<String, String> mySqlConfig) {
+        return new MySqlSyncTableActionBuilder(mySqlConfig);
+    }
+
+    protected MySqlSyncDatabaseActionBuilder syncDatabaseActionBuilder(
+            Map<String, String> mySqlConfig) {
+        return new MySqlSyncDatabaseActionBuilder(mySqlConfig);
+    }
+
+    /** Builder to build {@link MySqlSyncTableAction} from action arguments. */
+    protected class MySqlSyncTableActionBuilder
+            extends SyncTableActionBuilder<MySqlSyncTableAction> {
+
+        public MySqlSyncTableActionBuilder(Map<String, String> mySqlConfig) {
+            super(mySqlConfig);
+        }
+
+        public MySqlSyncTableAction build() {
+            List<String> args =
+                    new ArrayList<>(
+                            Arrays.asList(
+                                    "--warehouse",
+                                    warehouse,
+                                    "--database",
+                                    database,
+                                    "--table",
+                                    tableName));
+
+            args.addAll(mapToArgs("--mysql-conf", sourceConfig));
+            args.addAll(mapToArgs("--catalog-conf", catalogConfig));
+            args.addAll(mapToArgs("--table-conf", tableConfig));
+
+            args.addAll(listToArgs("--partition-keys", partitionKeys));
+            args.addAll(listToArgs("--primary-keys", primaryKeys));
+            args.addAll(listToArgs("--type-mapping", typeMappingModes));
+
+            args.addAll(listToMultiArgs("--computed-column", computedColumnArgs));
+
+            MultipleParameterTool params =
+                    MultipleParameterTool.fromArgs(args.toArray(args.toArray(new String[0])));
+            return (MySqlSyncTableAction)
+                    new MySqlSyncTableActionFactory()
+                            .create(params)
+                            .orElseThrow(RuntimeException::new);
+        }
+    }
+
+    /** Builder to build {@link MySqlSyncDatabaseAction} from action arguments. */
+    protected class MySqlSyncDatabaseActionBuilder
+            extends SyncDatabaseActionBuilder<MySqlSyncDatabaseAction> {
+
+        public MySqlSyncDatabaseActionBuilder(Map<String, String> mySqlConfig) {
+            super(mySqlConfig);
+        }
+
+        public MySqlSyncDatabaseAction build() {
+            List<String> args =
+                    new ArrayList<>(
+                            Arrays.asList("--warehouse", warehouse, "--database", database));
+
+            args.addAll(mapToArgs("--mysql-conf", sourceConfig));
+            args.addAll(mapToArgs("--catalog-conf", catalogConfig));
+            args.addAll(mapToArgs("--table-conf", tableConfig));
+
+            args.addAll(nullableToArgs("--ignore-incompatible", ignoreIncompatible));
+            args.addAll(nullableToArgs("--merge-shards", mergeShards));
+            args.addAll(nullableToArgs("--table-prefix", tablePrefix));
+            args.addAll(nullableToArgs("--table-suffix", tableSuffix));
+            args.addAll(nullableToArgs("--including-tables", includingTables));
+            args.addAll(nullableToArgs("--excluding-tables", excludingTables));
+            args.addAll(nullableToArgs("--mode", mode));
+
+            args.addAll(listToArgs("--type-mapping", typeMappingModes));
+
+            MultipleParameterTool params =
+                    MultipleParameterTool.fromArgs(args.toArray(args.toArray(new String[0])));
+            return (MySqlSyncDatabaseAction)
+                    new MySqlSyncDatabaseActionFactory()
+                            .create(params)
+                            .orElseThrow(RuntimeException::new);
         }
     }
 }

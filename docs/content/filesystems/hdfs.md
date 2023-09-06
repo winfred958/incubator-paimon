@@ -45,6 +45,8 @@ configure your HDFS:
 
 The first approach is recommended.
 
+If you do not want to include the value of the environment variable, you can configure `hadoop-conf-loader` to `option`.
+
 {{< /tab >}}
 
 {{< tab "Hive/Spark" >}}
@@ -84,7 +86,7 @@ For Alluxio support add the following entry into the core-site.xml file:
 
 {{< tab "Flink" >}}
 
-It is recommended to use [Flink Kerberos Keytab](https://nightlies.apache.org/flink/flink-docs-release-1.17/docs/deployment/security/security-kerberos/).
+It is recommended to use [Flink Kerberos Keytab](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/security/security-kerberos/).
 
 {{< /tab >}}
 
@@ -104,7 +106,7 @@ An intuitive approach is to configure Hive's kerberos authentication.
 
 Configure the following three options in your catalog configuration:
 
-- security.kerberos.login.keytabs: Absolute path to a Kerberos keytab file that contains the user credentials.
+- security.kerberos.login.keytab: Absolute path to a Kerberos keytab file that contains the user credentials.
   Please make sure it is copied to each machine.
 - security.kerberos.login.principal: Kerberos principal name associated with the keytab.
 - security.kerberos.login.use-ticket-cache: True or false, indicates whether to read from your Kerberos ticket cache.

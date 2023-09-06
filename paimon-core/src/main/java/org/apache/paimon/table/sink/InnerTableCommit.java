@@ -18,8 +18,6 @@
 
 package org.apache.paimon.table.sink;
 
-import org.apache.paimon.operation.Lock;
-
 import javax.annotation.Nullable;
 
 import java.util.Map;
@@ -38,10 +36,9 @@ public interface InnerTableCommit extends StreamTableCommit, BatchTableCommit {
      *   <li>For Streaming: the default value of 'ignoreEmptyCommit' is false.
      *   <li>For Batch: the default value of 'ignoreEmptyCommit' is true.
      * </ul>
+     *
+     * <p>If there are no new files or compact files at the same time, no new commit will be
+     * generated regardless of the configuration (No one trigger commit interface).
      */
     InnerTableCommit ignoreEmptyCommit(boolean ignoreEmptyCommit);
-
-    /** @deprecated lock should pass from table. */
-    @Deprecated
-    InnerTableCommit withLock(Lock lock);
 }

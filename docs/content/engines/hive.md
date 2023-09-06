@@ -35,6 +35,7 @@ Paimon currently supports Hive 3.1, 2.3, 2.2, 2.1 and 2.1-cdh-6.3.
 ## Execution Engine
 
 Paimon currently supports MR and Tez execution engine for Hive Read, and MR execution engine for Hive Write. 
+Note If you use beeline, please restart the hive cluster.
 
 ## Installation
 
@@ -100,7 +101,9 @@ CREATE CATALOG my_hive WITH (
   'type' = 'paimon',
   'metastore' = 'hive',
   'uri' = 'thrift://<hive-metastore-host-name>:<port>',
-  'warehouse' = '/path/to/table/store/warehouse'
+  -- 'hive-conf-dir' = '...', this is recommended in the kerberos environment
+  -- 'hadoop-conf-dir' = '...', this is recommended in the kerberos environment
+  'warehouse' = 'hdfs:///path/to/table/store/warehouse'
 );
 
 -- Use paimon Hive catalog
@@ -159,6 +162,7 @@ OK
 */
 
 -- Insert records into test table
+-- Note tez engine does not support hive write, only the hive engine is supported.
 
 INSERT INTO test_table VALUES (3, 'Paimon');
 
@@ -170,6 +174,19 @@ OK
 2	Store
 3	Paimon
 */
+
+-- time travel
+
+SET paimon.scan.snapshot-id=1;
+SELECT a, b FROM test_table ORDER BY a;
+/*
+OK
+1	Table
+2	Store
+3	Paimon
+*/
+SET paimon.scan.snapshot-id=null;
+
 ```
 
 ## Hive SQL: create new Paimon Tables
@@ -186,7 +203,7 @@ CREATE TABLE hive_test_table(
     a INT COMMENT 'The a field',
     b STRING COMMENT 'The b field'
 )
-STORED BY 'org.apache.paimon.hive.PaimonStorageHandler'
+STORED BY 'org.apache.paimon.hive.PaimonStorageHandler';
 ```
 
 ## Hive SQL: access Paimon Tables by External Table
@@ -202,6 +219,16 @@ To access existing paimon table, you can also register them as external tables i
 CREATE EXTERNAL TABLE external_test_table
 STORED BY 'org.apache.paimon.hive.PaimonStorageHandler'
 LOCATION '/path/to/table/store/warehouse/default.db/test_table';
+    
+-- In addition to the way setting location above, you can also place the location setting in TBProperties
+-- to avoid Hive accessing Paimon's location through its own file system when creating tables.
+-- This method is effective in scenarios using Object storage,such as s3.
+
+CREATE EXTERNAL TABLE external_test_table
+STORED BY 'org.apache.paimon.hive.PaimonStorageHandler'
+TBLPROPERTIES (
+ 'paimon_location' ='s3://xxxxx/path/to/table/store/warehouse/default.db/test_table'
+);
 
 -- Read records from external_test_table
 
